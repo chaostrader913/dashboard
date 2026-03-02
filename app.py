@@ -16,8 +16,15 @@ st.title("Market Intelligence Dashboard")
 # --- Expanded Ticker Groups ---
 TICKER_GROUPS = {
     'Equities & Indices': {
-        '^GSPC': 'S&P 500', '^IXIC': 'NASDAQ 100', '^DJI': 'Dow Jones',
-        '^RUT': 'Russell 2000', '^VIX': 'Volatility Index', 'QQQ': 'Nasdaq ETF'
+        '^GSPC': 'S&P 500', 'SPY': 'S&P 500 ETF', 'VOO': 'Vanguard S&P 500',
+
+        '^IXIC': 'NASDAQ Composite', 'QQQ': 'Nasdaq 100 ETF',
+
+        '^DJI': 'Dow Jones', 'DIA': 'Dow Jones ETF',
+
+        '^RUT': 'Russell 2000', 'IWM': 'Russell 2000 ETF',
+
+        '^VIX': 'Volatility Index', 'VIXY': 'VIX Short-Term Futures'
     },
     'Sectors (US)': {
         'XLK': 'Technology', 'XLV': 'Healthcare', 'XLF': 'Financials',
@@ -26,8 +33,12 @@ TICKER_GROUPS = {
         'XLB': 'Materials', 'XLRE': 'Real Estate', 'GLD': 'GOLD ETF'
     },
     'International': {
-        'SPY': 'USA (S&P)', 'EWJ': 'Japan', 'FXI': 'China',
-        'EWG': 'Germany', 'EWU': 'UK', 'INDA': 'India', 'EWW': 'Mexico'
+        {
+        'EWJ': 'Japan', 'FXI': 'China (Large Cap)', 'MCHI': 'China (MSCI)',
+        'EWG': 'Germany', 'EWU': 'UK', 'INDA': 'India',
+        'EWW': 'Mexico', 'EWZ': 'Brazil', 'EFA': 'MSCI EAFE (Dev. ex-US)',
+        'IEMG': 'MSCI Em. Markets', 'VGK': 'Europe', 'EWC': 'Canada', 'EWA': 'Australia',
+        'KSA': 'Saudi Arabia'
     },
     'Fixed Income': {
         'SHY': '1-3Y Treasury', 'IEF': '7-10Y Treasury', 'TLT': '20Y+ Treasury',
@@ -176,4 +187,5 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     plt.close(fig) # Prevent memory leaks
             else:
                  with cols[i % 3]:
+
                     st.warning(f"No data for {ticker}")
