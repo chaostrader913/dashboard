@@ -33,7 +33,6 @@ TICKER_GROUPS = {
         'XLB': 'Materials', 'XLRE': 'Real Estate', 'GLD': 'GOLD ETF'
     },
     'International': {
-        {
         'EWJ': 'Japan', 'FXI': 'China (Large Cap)', 'MCHI': 'China (MSCI)',
         'EWG': 'Germany', 'EWU': 'UK', 'INDA': 'India',
         'EWW': 'Mexico', 'EWZ': 'Brazil', 'EFA': 'MSCI EAFE (Dev. ex-US)',
@@ -189,3 +188,4 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                  with cols[i % 3]:
 
                     st.warning(f"No data for {ticker}")
+
