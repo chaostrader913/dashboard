@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore", message=".*MOVING Averages IGNORED.*")
 # --- 1. Terminal UI & CSS Overrides ---
 st.markdown("""
 <style>
-    .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 0rem; padding-right: 1rem; max-width: 100%; }
+    .block-container { padding-top: 1rem; padding-bottom: 1rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
     div[data-testid="column"] { padding: 2px !important; }
     div[data-testid="stHorizontalBlock"] { gap: 0rem !important; }
     div[data-testid="stTabs"] { gap: 0rem !important; }
@@ -61,17 +61,17 @@ TICKER_GROUPS = {
 }
 
 # --- 3. Plotting Engine ---
-def plot_single_asset(ticker, data, chart_type, style, show_sma, show_vol, show_tdsq, show_rsi):
+def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol, show_tdsq, show_rsi):
     tech_types = {'OHLC': 'ohlc', 'Candlestick': 'candle', 'Renko': 'renko', 'Point and Figure': 'pnf'}
     
     if chart_type in tech_types:
         mpf_type = tech_types[chart_type]
         current_style = style if not (mpf_type in ['renko', 'pnf'] and style == 'mike') else 'yahoo'
 
-        # Notice: title is completely removed from kwargs
         kwargs = dict(
             type=mpf_type, style=current_style, show_nontrading=False, returnfig=True,
-            figsize=(5, 3.0), tight_layout=True 
+            title=f"{name} ({ticker})", figsize=(5, 3.2), 
+            tight_layout=False # We handle the layout manually below to protect the title
         )
         
         if show_sma and mpf_type not in ['renko', 'pnf']: kwargs['mav'] = (20,)
@@ -89,11 +89,9 @@ def plot_single_asset(ticker, data, chart_type, style, show_sma, show_vol, show_
                 b13 = np.where(data['Countdown_Signal'] == 1, data['Low'] * 0.96, np.nan)
                 s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.04, np.nan)
                 
-                # Plot 9s as Terminal Green
                 if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
                 if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
                 
-                # Plot 13s as Terminal Red
                 if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
                 if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
 
@@ -105,15 +103,23 @@ def plot_single_asset(ticker, data, chart_type, style, show_sma, show_vol, show_
             if apds: kwargs['addplot'] = apds
 
         fig, axlist = mpf.plot(data, **kwargs)
+        
         if style == 'nightclouds': fig.patch.set_facecolor('#0E1117')
+        
+        # Protect the title and right-side axis labels
+        # top=0.88 reserves the top 12% of the image exclusively for the title
+        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
         return fig
+        
     else:
         # Fallback Line Chart
-        fig, ax = plt.subplots(figsize=(5, 3.0))
+        fig, ax = plt.subplots(figsize=(5, 3.2))
         prices = data['Close']
         ax.plot(prices.index, prices, linewidth=1.5, color='#00FFAA' if style=='nightclouds' else 'blue')
         if show_sma: ax.plot(prices.index, prices.rolling(20).mean(), linestyle='--', color='gray', alpha=0.7)
             
+        ax.set_title(f"{name} ({ticker})", fontsize=10, color='white' if style=='nightclouds' else 'black', pad=12)
+        
         if style == 'nightclouds':
             fig.patch.set_facecolor('#0E1117')
             ax.set_facecolor('#0E1117')
@@ -122,7 +128,7 @@ def plot_single_asset(ticker, data, chart_type, style, show_sma, show_vol, show_
                 
         ax.tick_params(axis='x', rotation=45, labelsize=8)
         ax.tick_params(axis='y', labelsize=8)
-        plt.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.95])
+        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
         return fig
 
 # --- 4. Sidebar Controls ---
@@ -142,8 +148,10 @@ with st.sidebar:
     st.markdown("#### OVERLAYS")
     sma_check = st.checkbox('20 SMA', value=True)
     vol_check = st.checkbox('VOLUME', value=True)
-    tdsq_check = st.checkbox('TDSQ (9 & 13)', value=False)
-    rsi_check = st.checkbox('RSI DIVERGENCE', value=False)
+    
+    # Changed value=True so these run automatically
+    tdsq_check = st.checkbox('TDSQ (9 & 13)', value=True)
+    rsi_check = st.checkbox('RSI DIVERGENCE', value=True)
     
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
@@ -160,21 +168,14 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     data = fetch_data(ticker=ticker, interval=interval_sel, period=period_sel, custom_days=day_slider)
                     
                     if data is not None and not data.empty:
+                        # Apply indicators if selected
                         if tdsq_check:
                             data = apply_td_sequential(data)
                         if rsi_check:
                             data = apply_rsi_divergence(data)
-                        
-                        # Render the custom HTML Terminal Title above the chart
-                        st.markdown(
-                            f"<div style='text-align: center; font-family: monospace; font-size: 14px; font-weight: bold; color: #E0E6ED; padding-top: 10px; padding-bottom: 2px;'>"
-                            f"{name} ({ticker})"
-                            f"</div>", 
-                            unsafe_allow_html=True
-                        )
-                        
-                        # Note: we no longer pass 'name' to the plot function, just ticker to satisfy args
-                        fig = plot_single_asset(ticker, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
+                            
+                        # Pass 'name' back into the plot function so it builds the title
+                        fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
                         st.pyplot(fig)
                         plt.close(fig) 
                     else:
