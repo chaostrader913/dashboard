@@ -10,26 +10,31 @@ st.markdown("### 📡 MODULE: ADVANCED SIGNAL SCANNER")
 st.divider()
 
 # --- 2. Command Row (User Inputs) ---
-col1, col2, col3, col4 = st.columns([1.5, 1, 2, 2])
+# --- 2. Command Row (User Inputs) ---
+col1, col2, col3, col4, col5 = st.columns([1.5, 1, 2, 2, 1])
 with col1:
     ticker = st.text_input("TARGET ASSET", value="BTC-USD").upper()
 with col2:
     timeframe = st.selectbox("TIMEFRAME", options=["1d", "1h", "15m"], index=0)
 with col3:
-    # Overlays map directly onto the candlestick chart
     overlays = st.multiselect(
         "PRICE OVERLAYS", 
         options=["TD Sequential", "Auto Trendlines", "Bollinger Bands"],
         default=["TD Sequential", "Auto Trendlines"]
     )
 with col4:
-    # Oscillators require their own subplot rows
     oscillators = st.multiselect(
         "OSCILLATORS", 
         options=["RSI Divergence", "MACD"],
         default=["RSI Divergence"]
     )
-
+with col5:
+    # New Slider for Trendline Density
+    if "Auto Trendlines" in overlays:
+        max_tl = st.slider("MAX TRENDLINES", min_value=1, max_value=10, value=3)
+    else:
+        max_tl = 3 # Default fallback
+        
 # --- 3. Data Processing & Indicator Application ---
 with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
     data = fetch_data(ticker, interval=timeframe, period="1y" if timeframe == "1d" else "60d")
@@ -67,10 +72,18 @@ fig.add_trace(go.Candlestick(
 
 # [ROW 1] OVERLAYS
 if "Auto Trendlines" in overlays:
-    # 1. Fetch the validated Amibroker lines
-    # (pct_limit=10 means it will only draw lines within 10% of the current price)
-    upper_lines, lower_lines = apply_advanced_trendlines(data, window=5, pct_limit=10.0, breaks_limit=2)
+    # We tightened the pct_limit to 5.0 (only lines very close to current price)
+    # We increased the window to 10 (ignores small 5-bar micro-chops)
+    # We pass in the dynamic max_tl from the slider
+    upper_lines, lower_lines = apply_advanced_trendlines(
+        data, 
+        window=10, 
+        pct_limit=5.0, 
+        breaks_limit=2, 
+        max_lines=max_tl
+    )
     
+    # ... (Keep the rest of your drawing loop the exact same) ...    
     # 2. Draw Upper Resistance Lines (Red/Pinkish)
     for i, line in enumerate(upper_lines):
         start_coord, end_coord = line
