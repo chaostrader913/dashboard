@@ -16,14 +16,14 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*MOVING Averages IGNORED.*")
 
 # --- 1. Terminal UI & CSS Overrides ---
-st.markdown("""
-<style>
-    .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
-    div[data-testid="column"] { padding: 4px !important; }
-    div[data-testid="stHorizontalBlock"] { gap: 0rem !important; }
-    div[data-testid="stTabs"] { gap: 0rem !important; }
-</style>
-""", unsafe_allow_html=True)
+# st.markdown("""
+# <style>
+#     .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
+#     div[data-testid="column"] { padding: 4px !important; }
+#     div[data-testid="stHorizontalBlock"] { gap: 0rem !important; }
+#     div[data-testid="stTabs"] { gap: 0rem !important; }
+# </style>
+# """, unsafe_allow_html=True)
 
 st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
 st.caption("MULTI-THREADED SNAPSHOT ENGINE // HOVER FOR FULLSCREEN")
