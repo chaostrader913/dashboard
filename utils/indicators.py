@@ -1,154 +1,232 @@
 import pandas as pd
+import pandas_ta as ta
 import numpy as np
 from scipy.signal import argrelextrema
 
-def get_1d_array(df, column_name):
-    """
-    Surgically extracts a 1D numpy array from a column.
-    If multiple tickers exist, it takes only the first one to match 
-    the DataFrame's row length.
-    """
-    # 1. Grab the column
-    target = df[column_name]
-    
-    # 2. If it's a DataFrame (multiple tickers/MultiIndex), take the first column only
-    if isinstance(target, pd.DataFrame):
-        target = target.iloc[:, 0]
-    
-    # 3. Convert to numpy and flatten to 1D
-    arr = target.values.flatten()
-    
-    # 4. TRUNCATE/MATCH: Ensure the length exactly matches the DataFrame index
-    # This prevents the 'Expected 1D array, got shape (X,)' error
-    return arr[:len(df)]
-
-# --- 1. Standard Indicators ---
+# --- 1. Standard Indicators (Powered by pandas-ta) ---
 
 def apply_macd(df, fast=12, slow=26, signal=9):
+    """Calculates MACD using pandas-ta and standardizes column names."""
     df = df.copy()
-    c = get_1d_array(df, 'Close')
-    c_ser = pd.Series(c)
-    
-    ema_fast = c_ser.ewm(span=fast, adjust=False).mean()
-    ema_slow = c_ser.ewm(span=slow, adjust=False).mean()
-    macd = ema_fast - ema_slow
-    macd_sig = macd.ewm(span=signal, adjust=False).mean()
-    
-    df['MACD'] = macd.values
-    df['MACD_Signal'] = macd_sig.values
-    df['MACD_Hist'] = (macd - macd_sig).values
+    df.ta.macd(fast=fast, slow=slow, signal=signal, append=True)
+    df.rename(columns={
+        f"MACD_{fast}_{slow}_{signal}": "MACD",
+        f"MACDh_{fast}_{slow}_{signal}": "MACD_Hist",
+        f"MACDs_{fast}_{slow}_{signal}": "MACD_Signal"
+    }, inplace=True, errors='ignore')
     return df
 
 def apply_bollinger_bands(df, length=20, std=2):
+    """Calculates Bollinger Bands using pandas-ta."""
     df = df.copy()
-    c = get_1d_array(df, 'Close')
-    c_ser = pd.Series(c)
-    
-    mid = c_ser.rolling(window=length).mean()
-    rstd = c_ser.rolling(window=length).std()
-    
-    df['BB_Mid'] = mid.values
-    df['BB_Upper'] = (mid + (rstd * std)).values
-    df['BB_Lower'] = (mid - (rstd * std)).values
+    df.ta.bbands(length=length, std=std, append=True)
+    df.rename(columns={
+        f"BBL_{length}_{float(std)}": "BB_Lower",
+        f"BBM_{length}_{float(std)}": "BB_Mid",
+        f"BBU_{length}_{float(std)}": "BB_Upper"
+    }, inplace=True, errors='ignore')
     return df
 
-# --- 2. Advanced Logic ---
+# --- 2. Advanced / Custom Logic (With Squeeze Protection) ---
 
 def apply_rsi_divergence(df, rsi_period=14, lookback=20):
+    """
+    Calculates RSI and finds hidden/regular divergences using local extrema.
+    Protected against 2D yfinance array shape errors.
+    """
     df = df.copy()
-    c_np = get_1d_array(df, 'Close')
-    l_np = get_1d_array(df, 'Low')
+    
+    # THE FIX: Squeeze core columns to strict 1D Series
+    close_series = df['Close'].squeeze()
+    low_series = df['Low'].squeeze()
 
-    delta = pd.Series(c_np).diff()
+    # 1. Calculate RSI using the squeezed 1D series
+    delta = close_series.diff()
     gain = delta.clip(lower=0).ewm(com=rsi_period - 1, adjust=False).mean()
     loss = (-1 * delta.clip(upper=0)).ewm(com=rsi_period - 1, adjust=False).mean()
     
-    # Safe division for rs to avoid 0/0
-    rs = gain / loss.replace(0, np.nan)
-    rsi_vals = 100 - (100 / (1 + rs))
-    df['RSI'] = rsi_vals.values
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
     
-    troughs = argrelextrema(l_np, np.less_equal, order=lookback)[0]
-    trough_mask = np.zeros(len(df))
-    trough_mask[troughs] = 1
-    df['Trough'] = trough_mask
+    # 2. Find local minima (troughs) for Bullish Divergence
+    df['Trough'] = 0
+    # Scipy requires a strict 1D numpy array
+    troughs = argrelextrema(low_series.values, np.less_equal, order=lookback)[0]
+    df.loc[df.index[troughs], 'Trough'] = 1
     
-    signals = np.zeros(len(df))
-    last_trough = None
+    df['Signal'] = 0
+    last_trough_idx = None
+    
+    # 3. Detect Divergence logic
     for i in range(len(df)):
-        if trough_mask[i] == 1:
-            if last_trough is not None:
-                # Use raw numpy values for comparison to bypass indexing
-                if l_np[i] < l_np[last_trough] and rsi_vals.iloc[i] > rsi_vals.iloc[last_trough]:
-                    if rsi_vals.iloc[i] < 40: 
-                        signals[i] = 1
-            last_trough = i
-    df['Signal'] = signals
+        if df['Trough'].iloc[i] == 1:
+            if last_trough_idx is not None:
+                # Extract scalars safely in case of rogue nested DataFrames
+                current_low = low_series.iloc[i]
+                past_low = low_series.iloc[last_trough_idx]
+                if isinstance(current_low, pd.Series): current_low = current_low.iloc[0]
+                if isinstance(past_low, pd.Series): past_low = past_low.iloc[0]
+                
+                current_rsi = df['RSI'].iloc[i]
+                past_rsi = df['RSI'].iloc[last_trough_idx]
+                if isinstance(current_rsi, pd.Series): current_rsi = current_rsi.iloc[0]
+                if isinstance(past_rsi, pd.Series): past_rsi = past_rsi.iloc[0]
+
+                # Bullish Regular Divergence: Price makes Lower Low, RSI makes Higher Low
+                if current_low < past_low and current_rsi > past_rsi:
+                    # Ensure RSI is actually in oversold territory for validity
+                    if current_rsi < 40: 
+                        df.iloc[i, df.columns.get_loc('Signal')] = 1
+                        
+            last_trough_idx = i
+            
     return df
 
 def apply_td_sequential(df):
+    """
+    Calculates both TD Setup (9) and TD Countdown (13).
+    Protected against 2D yfinance array shape errors.
+    """
     df = df.copy()
-    c = get_1d_array(df, 'Close')
-    l = get_1d_array(df, 'Low')
-    h = get_1d_array(df, 'High')
     
-    c_shift4 = np.full_like(c, np.nan)
-    c_shift4[4:] = c[:-4]
+    # THE FIX: Squeeze core columns
+    close_series = df['Close'].squeeze()
+    low_series = df['Low'].squeeze()
+    high_series = df['High'].squeeze()
     
-    # Initialize result arrays
-    dir_results = np.zeros(len(c))
+    df['TD_Setup'] = 0
+    df['TD_Countdown'] = 0
+    df['Setup_Signal'] = 0      
+    df['Countdown_Signal'] = 0  
     
-    # Vectorized comparison
-    # We use a mask to only compare where we have shifted data
-    mask = ~np.isnan(c_shift4)
-    dir_results[mask] = np.where(c[mask] > c_shift4[mask], 1, 
-                                 np.where(c[mask] < c_shift4[mask], -1, 0))
+    df['Close_vs_Close4'] = np.where(close_series > close_series.shift(4), 1, 
+                                     np.where(close_series < close_series.shift(4), -1, 0))
     
-    df['Close_vs_Close4'] = dir_results
-    
-    setup_vals = np.zeros(len(c))
-    setup_sig = np.zeros(len(c))
-    cd_vals = np.zeros(len(c))
-    cd_sig = np.zeros(len(c))
-
     setup_count = 0
-    setup_dir = 0
-    cd_count = 0
-    active_cd_dir = 0
+    setup_direction = 0
+    countdown_count = 0
+    active_countdown_dir = 0 
 
-    for i in range(len(c)):
-        curr_dir = dir_results[i]
-        if curr_dir != 0 and curr_dir == setup_dir:
+    for i in range(4, len(df)):
+        # --- 1. SETUP PHASE ---
+        current_dir = df['Close_vs_Close4'].iloc[i]
+        if isinstance(current_dir, pd.Series): current_dir = current_dir.iloc[0]
+            
+        if current_dir != 0 and current_dir == setup_direction:
             setup_count += 1
         else:
-            setup_count = 1 if curr_dir != 0 else 0
-            setup_dir = curr_dir
+            setup_count = 1 if current_dir != 0 else 0
+            setup_direction = current_dir
             
-        setup_vals[i] = setup_count * setup_dir
+        df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_count * setup_direction
         
         if setup_count == 9:
-            sig_dir = 1 if setup_dir == -1 else -1
-            setup_sig[i] = sig_dir
-            active_cd_dir = sig_dir
-            cd_count = 0 
+            signal_dir = 1 if setup_direction == -1 else -1
+            df.iloc[i, df.columns.get_loc('Setup_Signal')] = signal_dir
+            
+            active_countdown_dir = signal_dir
+            countdown_count = 0 
             setup_count = 0 
             
-        if active_cd_dir != 0 and i >= 2:
-            if active_cd_dir == 1 and c[i] <= l[i-2]:
-                cd_count += 1
-            elif active_cd_dir == -1 and c[i] >= h[i-2]:
-                cd_count += 1
+        # --- 2. COUNTDOWN PHASE ---
+        if active_countdown_dir != 0 and i >= 2:
+            current_close = close_series.iloc[i]
+            if isinstance(current_close, pd.Series): current_close = current_close.iloc[0]
                 
-            cd_vals[i] = cd_count * active_cd_dir
-            if cd_count == 13:
-                cd_sig[i] = active_cd_dir
-                active_cd_dir = 0 
-                cd_count = 0
+            if active_countdown_dir == 1 and current_close <= low_series.iloc[i-2]:
+                countdown_count += 1
+            elif active_countdown_dir == -1 and current_close >= high_series.iloc[i-2]:
+                countdown_count += 1
                 
-    # Direct assignment to the copy
-    df['TD_Setup'] = setup_vals
-    df['Setup_Signal'] = setup_sig
-    df['TD_Countdown'] = cd_vals
-    df['Countdown_Signal'] = cd_sig
-    
+            df.iloc[i, df.columns.get_loc('TD_Countdown')] = countdown_count * active_countdown_dir
+
+            if countdown_count == 13:
+                df.iloc[i, df.columns.get_loc('Countdown_Signal')] = active_countdown_dir
+                active_countdown_dir = 0 
+                countdown_count = 0
+
     return df
+
+def apply_advanced_trendlines(df, window=5, pct_limit=5.0, breaks_limit=2, max_lines=3):
+    """
+    Translates the Amibroker Auto Trendlines logic.
+    Identifies valid trendlines, scores them by length/significance, 
+    and returns only the top N lines to prevent chart clutter.
+    """
+    df = df.copy()
+    
+    # THE FIX: Squeeze core columns
+    close_series = df['Close'].squeeze()
+    high_series = df['High'].squeeze()
+    low_series = df['Low'].squeeze()
+    
+    highs = argrelextrema(high_series.values, np.greater_equal, order=window)[0]
+    lows = argrelextrema(low_series.values, np.less_equal, order=window)[0]
+    
+    valid_upper_lines = []
+    valid_lower_lines = []
+    
+    last_close = close_series.iloc[-1]
+    if isinstance(last_close, pd.Series): last_close = last_close.iloc[0]
+    
+    # --- Upper Trendlines (Resistance) ---
+    for i in range(len(highs)):
+        for j in range(i + 1, len(highs)):
+            idx1, idx2 = highs[i], highs[j]
+            y1, y2 = high_series.iloc[idx1], high_series.iloc[idx2]
+            if isinstance(y1, pd.Series): y1 = y1.iloc[0]
+            if isinstance(y2, pd.Series): y2 = y2.iloc[0]
+            
+            slope = (y2 - y1) / (idx2 - idx1)
+            end_y = y1 + slope * ((len(df) - 1) - idx1)
+            
+            if abs(1 - (end_y / last_close)) * 100 <= pct_limit:
+                breaks = 0
+                for k in range(idx2 + 1, len(df)):
+                    projected_y = y1 + slope * (k - idx1)
+                    curr_close = close_series.iloc[k]
+                    if isinstance(curr_close, pd.Series): curr_close = curr_close.iloc[0]
+                        
+                    if curr_close > projected_y:
+                        breaks += 1
+                    if breaks > breaks_limit:
+                        break 
+                        
+                if breaks <= breaks_limit:
+                    line_length = (len(df) - 1) - idx1
+                    valid_upper_lines.append((line_length, ((df.index[idx1], y1), (df.index[-1], end_y))))
+                    
+    # --- Lower Trendlines (Support) ---
+    for i in range(len(lows)):
+        for j in range(i + 1, len(lows)):
+            idx1, idx2 = lows[i], lows[j]
+            y1, y2 = low_series.iloc[idx1], low_series.iloc[idx2]
+            if isinstance(y1, pd.Series): y1 = y1.iloc[0]
+            if isinstance(y2, pd.Series): y2 = y2.iloc[0]
+            
+            slope = (y2 - y1) / (idx2 - idx1)
+            end_y = y1 + slope * ((len(df) - 1) - idx1)
+            
+            if abs(1 - (end_y / last_close)) * 100 <= pct_limit:
+                breaks = 0
+                for k in range(idx2 + 1, len(df)):
+                    projected_y = y1 + slope * (k - idx1)
+                    curr_close = close_series.iloc[k]
+                    if isinstance(curr_close, pd.Series): curr_close = curr_close.iloc[0]
+                        
+                    if curr_close < projected_y:
+                        breaks += 1
+                    if breaks > breaks_limit:
+                        break 
+                        
+                if breaks <= breaks_limit:
+                    line_length = (len(df) - 1) - idx1
+                    valid_lower_lines.append((line_length, ((df.index[idx1], y1), (df.index[-1], end_y))))
+                    
+    valid_upper_lines.sort(key=lambda x: x[0], reverse=True)
+    valid_lower_lines.sort(key=lambda x: x[0], reverse=True)
+    
+    top_upper = [coords for length, coords in valid_upper_lines[:max_lines]]
+    top_lower = [coords for length, coords in valid_lower_lines[:max_lines]]
+    
+    return top_upper, top_lower
