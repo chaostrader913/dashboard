@@ -48,8 +48,9 @@ with col3:
     st.info("### 📈 指标演示")
     st.markdown("学习技术指标")
     if st.button("查看指标", key="btn_indicators"):
-        st.switch_page("pages/01_MACD.py")
+        st.switch_page("pages/01_intro.py")
 
 # 最近信号预览
 st.subheader("🔥 热门信号")
 # 这里可以添加缓存的热门信号
+
