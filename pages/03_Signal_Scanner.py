@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from utils.data_loader import fetch_data
-from utils.indicators import apply_td_sequential, apply_rsi_divergence, get_pivot_points, apply_macd, apply_bollinger_bands
+from utils.indicators import apply_td_sequential, apply_rsi_divergence, apply_advanced_trendlines, apply_macd, apply_bollinger_bands
 
 # --- 1. Terminal UI Styling ---
 st.markdown("### 📡 MODULE: ADVANCED SIGNAL SCANNER")
@@ -42,7 +42,35 @@ if data is None or data.empty:
 if "TD Sequential" in overlays:
     data = apply_td_sequential(data)
 if "Auto Trendlines" in overlays:
-    data = get_pivot_points(data, window=5)
+    # 1. Fetch the validated Amibroker lines
+    # (pct_limit=10 means it will only draw lines within 10% of the current price)
+    upper_lines, lower_lines = apply_advanced_trendlines(data, window=5, pct_limit=10.0, breaks_limit=2)
+    
+    # 2. Draw Upper Resistance Lines (Red/Pinkish)
+    for i, line in enumerate(upper_lines):
+        start_coord, end_coord = line
+        fig.add_trace(go.Scatter(
+            x=[start_coord[0], end_coord[0]], 
+            y=[start_coord[1], end_coord[1]], 
+            mode='lines', 
+            name=f'Resist {i}', 
+            line=dict(color='#FF4B4B', dash='dot', width=1.5),
+            hoverinfo='skip',
+            showlegend=False
+        ), row=1, col=1)
+
+    # 3. Draw Lower Support Lines (Cyan/Greenish)
+    for i, line in enumerate(lower_lines):
+        start_coord, end_coord = line
+        fig.add_trace(go.Scatter(
+            x=[start_coord[0], end_coord[0]], 
+            y=[start_coord[1], end_coord[1]], 
+            mode='lines', 
+            name=f'Support {i}', 
+            line=dict(color='#00FFAA', dash='dot', width=1.5),
+            hoverinfo='skip',
+            showlegend=False
+        ), row=1, col=1)
 if "Bollinger Bands" in overlays:
     data = apply_bollinger_bands(data)
 if "RSI Divergence" in oscillators:
