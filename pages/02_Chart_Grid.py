@@ -6,18 +6,10 @@ import mplfinance as mpf
 import warnings
 import io
 import concurrent.futures
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # --- IMPORT GLOBALS ---
 from utils.data_loader import fetch_data
-from utils.indicators import (
-    apply_td_sequential, 
-    apply_rsi_divergence,
-    apply_macd,                 
-    apply_bollinger_bands,      
-    apply_advanced_trendlines   
-)
+from utils.indicators import apply_td_sequential, apply_rsi_divergence
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -30,12 +22,11 @@ st.markdown("""
     div[data-testid="column"] { padding: 4px !important; }
     div[data-testid="stHorizontalBlock"] { gap: 0rem !important; }
     div[data-testid="stTabs"] { gap: 0rem !important; }
-    .stButton>button { height: 30px; min-height: 30px; padding: 0px; border-radius: 2px; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
-st.caption("MULTI-THREADED SNAPSHOT ENGINE // INTERACTIVE DEEP DIVE")
+st.caption("MULTI-THREADED SNAPSHOT ENGINE // HOVER FOR FULLSCREEN")
 
 # --- 2. Institutional Ticker Database ---
 TICKER_GROUPS = {
@@ -71,88 +62,7 @@ TICKER_GROUPS = {
     }
 }
 
-# --- 3. Interactive Modal (Deep Dive) ---
-@st.dialog("🔎 INTERACTIVE TERMINAL", width="large")
-def show_deep_dive(ticker, name, data):
-    st.markdown(f"#### {name} ({ticker})")
-    
-    with st.spinner("Processing Terminal Data..."):
-        # Calculate advanced overlays on-the-fly to protect grid performance
-        df = data.copy()
-        df = apply_bollinger_bands(df)
-        df = apply_macd(df)
-        upper_lines, lower_lines = apply_advanced_trendlines(df, window=10, pct_limit=5.0, breaks_limit=2, max_lines=3)
-        
-        has_rsi = 'RSI' in df.columns 
-        
-        fig = make_subplots(
-            rows=3 if has_rsi else 2, cols=1, shared_xaxes=True, 
-            vertical_spacing=0.03, 
-            row_heights=[0.6, 0.2, 0.2] if has_rsi else [0.7, 0.3]
-        )
-        
-        # [ROW 1] Candlesticks & Bollinger Bands
-        fig.add_trace(go.Candlestick(
-            x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-            name="Price", increasing_line_color='#00FFAA', decreasing_line_color='#FF4B4B'
-        ), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], mode='lines', line=dict(color='#4B4BFF', width=1)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], mode='lines', line=dict(color='#4B4BFF', width=1)), row=1, col=1)
-        
-        # [ROW 1] Auto Trendlines
-        for i, line in enumerate(upper_lines):
-            fig.add_trace(go.Scatter(x=[line[0][0], line[1][0]], y=[line[0][1], line[1][1]], mode='lines', line=dict(color='#FF4B4B', dash='dot', width=1.5)), row=1, col=1)
-        for i, line in enumerate(lower_lines):
-            fig.add_trace(go.Scatter(x=[line[0][0], line[1][0]], y=[line[0][1], line[1][1]], mode='lines', line=dict(color='#00FFAA', dash='dot', width=1.5)), row=1, col=1)
-
-        # [ROW 1] TDSQ Signals
-        if 'Setup_Signal' in df.columns:
-            b9 = df[df['Setup_Signal'] == 1]
-            s9 = df[df['Setup_Signal'] == -1]
-            fig.add_trace(go.Scatter(x=b9.index, y=b9['Low']*0.98, mode='text', text='9', textfont=dict(color='#00FFAA', size=13)), row=1, col=1)
-            fig.add_trace(go.Scatter(x=s9.index, y=s9['High']*1.02, mode='text', text='9', textfont=dict(color='#00FFAA', size=13)), row=1, col=1)
-            
-            b13 = df[df['Countdown_Signal'] == 1]
-            s13 = df[df['Countdown_Signal'] == -1]
-            fig.add_trace(go.Scatter(x=b13.index, y=b13['Low']*0.96, mode='text', text='13', textfont=dict(color='#FF4B4B', size=16)), row=1, col=1)
-            fig.add_trace(go.Scatter(x=s13.index, y=s13['High']*1.04, mode='text', text='13', textfont=dict(color='#FF4B4B', size=16)), row=1, col=1)
-
-        # [ROW 1] RSI Divergence Arrow
-        if 'Signal' in df.columns and has_rsi:
-            rsi_b = df[df['Signal'] == 1]
-            fig.add_trace(go.Scatter(x=rsi_b.index, y=rsi_b['Low']*0.95, mode='markers', marker=dict(symbol='triangle-up', size=12, color='#00AAFF')), row=1, col=1)
-
-        # [ROW 2] MACD Overlay
-        hist_colors = ['#00FFAA' if val >= 0 else '#FF4B4B' for val in df['MACD_Hist']]
-        fig.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], marker_color=hist_colors), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], mode='lines', line=dict(color='#00AAFF', width=1.5)), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MACD_Signal'], mode='lines', line=dict(color='#FFBB00', width=1.5)), row=2, col=1)
-
-        # [ROW 3] RSI
-        if has_rsi:
-            fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], mode='lines', line=dict(color='#00AAFF', width=1.5)), row=3, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="#FF4B4B", line_width=1, row=3, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="#00FFAA", line_width=1, row=3, col=1)
-
-        # --- GAP SKIPPING ENGINE ---
-        dt_all = pd.date_range(start=df.index.min(), end=df.index.max())
-        dt_obs = df.index.normalize().unique()
-        dt_breaks = dt_all.difference(dt_obs).strftime("%Y-%m-%d").tolist()
-        fig.update_xaxes(rangebreaks=[dict(values=dt_breaks)])
-        
-        # --- THEME STYLING ---
-        fig.update_layout(
-            template="plotly_dark", paper_bgcolor="#0E1117", plot_bgcolor="#0E1117",
-            height=700, xaxis_rangeslider_visible=False, showlegend=False,
-            margin=dict(l=10, r=10, t=10, b=10),
-            font=dict(family="Courier New, monospace", color="#E0E6ED")
-        )
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#2B3040', zeroline=False)
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#2B3040', zeroline=False)
-        
-        st.plotly_chart(fig, use_container_width=True)
-
-# --- 4. Render Caching Engine ---
+# --- 3. Render Caching Engine ---
 @st.cache_data(show_spinner=False, ttl=900)
 def get_chart_image_bytes(ticker, data, chart_type, style, show_sma, show_vol, show_tdsq, show_rsi):
     tech_types = {'OHLC': 'ohlc', 'Candlestick': 'candle', 'Renko': 'renko', 'Point and Figure': 'pnf'}
@@ -212,7 +122,7 @@ def get_chart_image_bytes(ticker, data, chart_type, style, show_sma, show_vol, s
     buf.seek(0)
     return buf.getvalue()
 
-# --- 5. Sidebar Controls ---
+# --- 4. Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ GRID CONTROLS")
     period_sel = st.selectbox('PERIOD', ['1mo', '3mo', '6mo', '1y', '2y'], index=1)
@@ -235,7 +145,7 @@ with st.sidebar:
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
 
-# --- 6. Main App Execution (Tabs & Grid) ---
+# --- 5. Main App Execution (Tabs & Grid) ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
 
 for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
@@ -262,8 +172,8 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     if tdsq_check: data = apply_td_sequential(data)
                     if rsi_check: data = apply_rsi_divergence(data)
                         
-                    last_close = data['Close'].iloc[-1]
-                    prev_close = data['Close'].iloc[-2] if len(data) > 1 else last_close
+                    last_close = float(data['Close'].iloc[-1])
+                    prev_close = float(data['Close'].iloc[-2]) if len(data) > 1 else last_close
                     pct_change = ((last_close - prev_close) / prev_close) * 100
                     
                     color = "#00FFAA" if pct_change >= 0 else "#FF4B4B"
@@ -279,9 +189,6 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     
                     img_bytes = get_chart_image_bytes(ticker, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
                     st.image(img_bytes, use_container_width=True)
-                    
-                    if st.button("🔎 DEEP DIVE", key=f"zoom_{ticker}_{group_name}", use_container_width=True):
-                        show_deep_dive(ticker, name, data)
                         
                 else:
                     st.error(f"ERR: {ticker} OFFLINE")
