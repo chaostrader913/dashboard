@@ -130,7 +130,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol)
         ax.tick_params(axis='y', labelsize=8)
         
         # Aggressive whitespace removal
-        plt.tight_layout(pad=0.2) 
+        plt.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.95])
         return fig
 
 # --- 4. Sidebar Controls ---
@@ -176,4 +176,5 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                         plt.close(fig) 
                     else:
                         st.error(f"ERR: {ticker}")
+
 
