@@ -145,6 +145,8 @@ with st.sidebar:
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
 
+# ... (Keep your imports and Ticker Groups the same) ...
+
 # --- 6. Main App Execution (Tabs & Grid) ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
 
@@ -165,24 +167,32 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
 
         cols = st.columns(cols_count)
         for i, (ticker, name) in enumerate(tickers.items()):
-            # Extract the raw data from the multi-threaded results
-            data = results.get(ticker)
+            raw_data = results.get(ticker)
             
             with cols[i % cols_count]:
-                if data is not None and not data.empty:
-                    # --- CRITICAL FIX: FLATTEN MULTI-INDEX ---
-                    # This ensures the 'Close' column is 1D before indicator math runs
-                    if isinstance(data.columns, pd.MultiIndex):
-                        data.columns = data.columns.get_level_values(0)
-                    
-                    # Apply indicators
+                if raw_data is not None and not raw_data.empty:
+                    # --- THE CRITICAL SANITIZATION STEP ---
+                    # 1. Handle MultiIndex: If Yahoo returns a grid, extract ONLY this ticker's data
+                    if isinstance(raw_data.columns, pd.MultiIndex):
+                        # Use .xs to "cross-section" the data for just this ticker
+                        # This effectively turns a MultiIndex back into a standard 1D DataFrame
+                        try:
+                            data = raw_data.xs(ticker, axis=1, level=1)
+                        except:
+                            # Fallback if MultiIndex is structured differently
+                            data = raw_data.copy()
+                            data.columns = data.columns.get_level_values(0)
+                    else:
+                        data = raw_data.copy()
+
+                    # 2. Apply indicators (Now safe because data is 1D)
                     if tdsq_check: data = apply_td_sequential(data)
                     if rsi_check: data = apply_rsi_divergence(data)
                         
-                    # Calculate Live Market Context Metrics
-                    # We use .item() or float() to ensure we have a single number
-                    last_close = float(data['Close'].iloc[-1])
-                    prev_close = float(data['Close'].iloc[-2]) if len(data) > 1 else last_close
+                    # 3. Extract Header Metrics (Explicitly grab the 'Close' column)
+                    close_col = data['Close']
+                    last_close = float(close_col.iloc[-1])
+                    prev_close = float(close_col.iloc[-2]) if len(close_col) > 1 else last_close
                     pct_change = ((last_close - prev_close) / prev_close) * 100
                     
                     color = "#00FFAA" if pct_change >= 0 else "#FF4B4B"
@@ -196,9 +206,11 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                         unsafe_allow_html=True
                     )
                     
+                    # 4. Generate and display the chart
                     img_bytes = get_chart_image_bytes(ticker, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
                     st.image(img_bytes, use_container_width=True)
                         
                 else:
                     st.error(f"ERR: {ticker} OFFLINE")
+
 
