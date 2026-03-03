@@ -20,9 +20,36 @@ st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
 
 # --- 2. Ticker Database ---
 TICKER_GROUPS = {
-    'Indices': {'^GSPC': 'S&P 500', 'QQQ': 'Nasdaq 100', 'IWM': 'Russell 2000', '^VIX': 'Volatility'},
-    'Sectors': {'XLK': 'Tech', 'XLF': 'Financials', 'XLV': 'Healthcare', 'XLE': 'Energy'},
-    'Crypto': {'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum', 'SOL-USD': 'Solana', 'DOGE-USD': 'Dogecoin'}
+    'Indices (US)': {
+        '^GSPC': 'S&P 500', '^DJI': 'Dow Jones', 'QQQ': 'Nasdaq 100', 'IWM': 'Russell 2000',
+        'MTUM': 'US Momentum', 'VLUE': 'US Value', 'QUAL': 'US Quality', 'USMV': 'US Min Vol'
+    },
+    'Sectors (US)': {
+        'XLK': 'Technology', 'XLV': 'Healthcare', 'XLF': 'Financials', 'XLE': 'Energy', 
+        'XLI': 'Industrials', 'XLY': 'Cons. Disc.', 'XLP': 'Cons. Staples', 
+        'XLU': 'Utilities', 'XLB': 'Materials', 'XLRE': 'Real Estate', 'XLC': 'Comm. Svcs'
+    },
+    'Themes (US)': {
+        'SMH': 'Semiconductors', 'IGV': 'Software', 'XBI': 'Biotech', 'ARKK': 'Innovation', 
+        'TAN': 'Solar', 'URA': 'Uranium', 'LIT': 'Lithium', 'PAVE': 'Infrastructure'
+    },
+    'International': {
+        'VEA': 'Dev ex-US', 'VWO': 'Emerging Mkts', 'EWJ': 'Japan', 
+        'FXI': 'China Large', 'INDA': 'India', 'EWG': 'Germany', 'EWU': 'UK', 'EWZ': 'Brazil'
+    },
+    'Fixed Income ETFs': {
+        'SHY': '1-3Y Treas', 'IEF': '7-10Y Treas', 'TLT': '20Y+ Treas',
+        'LQD': 'Inv. Grade', 'HYG': 'High Yield', 'BND': 'Total Bond', 
+        'MBB': 'MBS ETF', 'TIP': 'TIPS Bond'
+    },
+    'Commodity, Currencies & Crypto': {
+        'GLD': 'Gold', 'SLV': 'Silver', 'USO': 'Crude Oil', 'UUP': 'US Dollar', 
+        'FXE': 'Euro', 'FXY': 'Jap Yen', 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum'
+    },
+    'Major Stocks by Market Cap': {
+        'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'Nvidia', 'GOOGL': 'Alphabet',
+        'AMZN': 'Amazon', 'META': 'Meta', 'BRK-B': 'Berkshire', 'TSLA': 'Tesla'
+    }
 }
 
 # --- 3. Plotting Engine ---
@@ -78,3 +105,4 @@ for tab, (group, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     # Render
                     img = get_chart_image(ticker, data, style_sel, td_on, rsi_on)
                     st.image(img, use_container_width=True)
+
