@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import warnings
+import io
+import concurrent.futures
+import plotly.graph_objects as go
 
 # --- IMPORT GLOBALS ---
 from utils.data_loader import fetch_data
@@ -14,19 +17,21 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*MOVING Averages IGNORED.*")
 
 # --- 1. Terminal UI & CSS Overrides ---
-# st.markdown("""
-# <style>
-#     .block-container { padding-top: 1rem; padding-bottom: 1rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
-#     div[data-testid="column"] { padding: 2px !important; }
-#     div[data-testid="stHorizontalBlock"] { gap: 0rem !important; }
-#     div[data-testid="stTabs"] { gap: 0rem !important; }
-# </style>
-# """, unsafe_allow_html=True)
+st.markdown("""
+<style>
+    .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
+    div[data-testid="column"] { padding: 4px !important; }
+    div[data-testid="stHorizontalBlock"] { gap: 0rem !important; }
+    div[data-testid="stTabs"] { gap: 0rem !important; }
+    /* Make the deep dive button sleek */
+    .stButton>button { height: 30px; min-height: 30px; padding: 0px; border-radius: 2px; }
+</style>
+""", unsafe_allow_html=True)
 
 st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
-st.caption("STATIC SNAPSHOT ENGINE // BIRD'S EYE VIEW")
+st.caption("MULTI-THREADED SNAPSHOT ENGINE // INTERACTIVE DEEP DIVE")
 
-# --- 2. Upgraded Institutional Ticker Database ---
+# --- 2. Institutional Ticker Database ---
 TICKER_GROUPS = {
     'Indices (US)': {
         '^GSPC': 'S&P 500', '^DJI': 'Dow Jones', 'QQQ': 'Nasdaq 100', 'IWM': 'Russell 2000',
@@ -60,29 +65,49 @@ TICKER_GROUPS = {
     }
 }
 
-# --- 3. Plotting Engine ---
-def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol, show_tdsq, show_rsi):
+# --- 3. Interactive Modal (Deep Dive) ---
+@st.dialog("🔎 INTERACTIVE TERMINAL", width="large")
+def show_deep_dive(ticker, name, data):
+    st.markdown(f"#### {name} ({ticker})")
+    
+    # Generate an interactive Plotly chart on the fly
+    fig = go.Figure(data=[go.Candlestick(
+        x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
+        increasing_line_color='#00FFAA', decreasing_line_color='#FF4B4B'
+    )])
+    fig.update_layout(
+        template="plotly_dark", paper_bgcolor="#0E1117", plot_bgcolor="#0E1117",
+        height=500, xaxis_rangeslider_visible=False,
+        margin=dict(l=10, r=10, t=10, b=10),
+        font=dict(family="Courier New, monospace", color="#E0E6ED")
+    )
+    fig.update_xaxes(showgrid=True, gridcolor='#2B3040')
+    fig.update_yaxes(showgrid=True, gridcolor='#2B3040')
+    
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("Use your mouse to zoom, pan, and hover for precise data points.")
+
+# --- 4. Render Caching Engine ---
+@st.cache_data(show_spinner=False, ttl=900)
+def get_chart_image_bytes(ticker, data, chart_type, style, show_sma, show_vol, show_tdsq, show_rsi):
+    """
+    Renders the Matplotlib chart in memory and returns PNG bytes.
+    This prevents memory leaks and makes tab-switching instantaneous.
+    """
     tech_types = {'OHLC': 'ohlc', 'Candlestick': 'candle', 'Renko': 'renko', 'Point and Figure': 'pnf'}
     
     if chart_type in tech_types:
         mpf_type = tech_types[chart_type]
         current_style = style if not (mpf_type in ['renko', 'pnf'] and style == 'mike') else 'yahoo'
-
-        kwargs = dict(
-            type=mpf_type, style=current_style, show_nontrading=False, returnfig=True,
-            title=f"{name} ({ticker})", figsize=(5, 3.2), 
-            tight_layout=False # We handle the layout manually below to protect the title
-        )
+        kwargs = dict(type=mpf_type, style=current_style, show_nontrading=False, returnfig=True, figsize=(5, 3.2))
         
         if show_sma and mpf_type not in ['renko', 'pnf']: kwargs['mav'] = (20,)
         if show_vol and 'Volume' in data.columns: kwargs['volume'] = True
         if mpf_type == 'renko': kwargs['renko_params'] = {'brick_size': 'atr'}
         elif mpf_type == 'pnf': kwargs['pnf_params'] = {'box_size': 'atr'}
 
-        # --- SIGNAL OVERLAYS ---
         apds = []
         if mpf_type not in ['renko', 'pnf']:
-            # 1. TDSQ Signals (Green for 9, Red for 13)
             if show_tdsq and 'Setup_Signal' in data.columns:
                 b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
                 s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
@@ -91,11 +116,9 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 
                 if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
                 if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
-                
                 if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
                 if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
 
-            # 2. RSI Divergence Signals
             if show_rsi and 'Signal' in data.columns:
                 rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.95, np.nan)
                 if not np.isnan(rsi_b).all(): apds.append(mpf.make_addplot(rsi_b, type='scatter', marker='^', color='#00AAFF', markersize=80))
@@ -103,23 +126,15 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
             if apds: kwargs['addplot'] = apds
 
         fig, axlist = mpf.plot(data, **kwargs)
-        
         if style == 'nightclouds': fig.patch.set_facecolor('#0E1117')
-        
-        # Protect the title and right-side axis labels
-        # top=0.88 reserves the top 12% of the image exclusively for the title
-        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
-        return fig
-        
+        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 1])
+
     else:
-        # Fallback Line Chart
         fig, ax = plt.subplots(figsize=(5, 3.2))
         prices = data['Close']
         ax.plot(prices.index, prices, linewidth=1.5, color='#00FFAA' if style=='nightclouds' else 'blue')
         if show_sma: ax.plot(prices.index, prices.rolling(20).mean(), linestyle='--', color='gray', alpha=0.7)
             
-        ax.set_title(f"{name} ({ticker})", fontsize=10, color='white' if style=='nightclouds' else 'black', pad=12)
-        
         if style == 'nightclouds':
             fig.patch.set_facecolor('#0E1117')
             ax.set_facecolor('#0E1117')
@@ -128,10 +143,16 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 
         ax.tick_params(axis='x', rotation=45, labelsize=8)
         ax.tick_params(axis='y', labelsize=8)
-        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
-        return fig
+        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 1])
+        
+    # Save the figure to an in-memory buffer to cache it
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=100, facecolor=fig.get_facecolor(), bbox_inches='tight')
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
 
-# --- 4. Sidebar Controls ---
+# --- 5. Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ GRID CONTROLS")
     period_sel = st.selectbox('PERIOD', ['1mo', '3mo', '6mo', '1y', '2y'], index=1)
@@ -148,36 +169,66 @@ with st.sidebar:
     st.markdown("#### OVERLAYS")
     sma_check = st.checkbox('20 SMA', value=True)
     vol_check = st.checkbox('VOLUME', value=True)
-    
-    # Changed value=True so these run automatically
     tdsq_check = st.checkbox('TDSQ (9 & 13)', value=True)
     rsi_check = st.checkbox('RSI DIVERGENCE', value=True)
     
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
 
-# --- 5. Main App Execution (Tabs & Grid) ---
+# --- 6. Main App Execution (Tabs & Grid) ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
 
 for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
     with tab:
+        # Multi-Threaded Data Fetching: Grabs all tab tickers simultaneously
+        results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_ticker = {
+                executor.submit(fetch_data, t, interval_sel, period_sel, day_slider): t 
+                for t in tickers.keys()
+            }
+            for future in concurrent.futures.as_completed(future_to_ticker):
+                t = future_to_ticker[future]
+                try:
+                    results[t] = future.result()
+                except Exception:
+                    results[t] = None
+
+        # Render Loop
         cols = st.columns(cols_count)
         for i, (ticker, name) in enumerate(tickers.items()):
+            data = results.get(ticker)
+            
             with cols[i % cols_count]:
-                with st.spinner(f"Loading {ticker}..."):
-                    data = fetch_data(ticker=ticker, interval=interval_sel, period=period_sel, custom_days=day_slider)
+                if data is not None and not data.empty:
+                    # Apply indicators
+                    if tdsq_check: data = apply_td_sequential(data)
+                    if rsi_check: data = apply_rsi_divergence(data)
+                        
+                    # Calculate Live Market Context Metrics
+                    last_close = data['Close'].iloc[-1]
+                    prev_close = data['Close'].iloc[-2] if len(data) > 1 else last_close
+                    pct_change = ((last_close - prev_close) / prev_close) * 100
                     
-                    if data is not None and not data.empty:
-                        # Apply indicators if selected
-                        if tdsq_check:
-                            data = apply_td_sequential(data)
-                        if rsi_check:
-                            data = apply_rsi_divergence(data)
-                            
-                        # Pass 'name' back into the plot function so it builds the title
-                        fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
-                        st.pyplot(fig)
-                        plt.close(fig) 
-                    else:
-                        st.error(f"ERR: {ticker}")
-
+                    color = "#00FFAA" if pct_change >= 0 else "#FF4B4B"
+                    sign = "+" if pct_change > 0 else ""
+                    icon = "🟢" if pct_change >= 0 else "🔴"
+                    
+                    # Inject High-Density Info Title
+                    st.markdown(
+                        f"<div style='text-align: center; font-family: monospace; font-size: 13px; font-weight: bold; color: #E0E6ED; padding-top: 5px;'>"
+                        f"{name} ({ticker}) <br> <span style='color: {color};'>${last_close:.2f} | {sign}{pct_change:.2f}% {icon}</span>"
+                        f"</div>", 
+                        unsafe_allow_html=True
+                    )
+                    
+                    # Render Image from Cache
+                    img_bytes = get_chart_image_bytes(ticker, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
+                    st.image(img_bytes, use_container_width=True)
+                    
+                    # The Interactive Deep Dive Button
+                    if st.button("🔎 DEEP DIVE", key=f"zoom_{ticker}_{group_name}", use_container_width=True):
+                        show_deep_dive(ticker, name, data)
+                        
+                else:
+                    st.error(f"ERR: {ticker} OFFLINE")
