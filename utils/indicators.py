@@ -22,27 +22,34 @@ def apply_td_sequential(df):
     Calculates both TD Setup (9) and TD Countdown (13).
     """
     df = df.copy()
+    
+    # --- THE FIX: Force columns to 1D Series to prevent shape errors ---
+    close_series = df['Close'].squeeze()
+    low_series = df['Low'].squeeze()
+    high_series = df['High'].squeeze()
+    
     df['TD_Setup'] = 0
     df['TD_Countdown'] = 0
+    df['Setup_Signal'] = 0      
+    df['Countdown_Signal'] = 0  
     
-    # We now separate the signals so the UI can plot '9' and '13' independently
-    df['Setup_Signal'] = 0      # Will trigger 1 (Buy 9) or -1 (Sell 9)
-    df['Countdown_Signal'] = 0  # Will trigger 1 (Buy 13) or -1 (Sell 13)
-    
-    # Setup Logic: Close vs Close 4 bars ago
-    df['Close_vs_Close4'] = np.where(df['Close'] > df['Close'].shift(4), 1, 
-                                     np.where(df['Close'] < df['Close'].shift(4), -1, 0))
+    # Use the squeezed 1D series for the math
+    df['Close_vs_Close4'] = np.where(close_series > close_series.shift(4), 1, 
+                                     np.where(close_series < close_series.shift(4), -1, 0))
     
     setup_count = 0
     setup_direction = 0
-    
     countdown_count = 0
-    active_countdown_dir = 0 # Tracks if we are looking for Buy 13s or Sell 13s
+    active_countdown_dir = 0 
 
     for i in range(4, len(df)):
-        # --- 1. SETUP PHASE (Looking for 9) ---
+        # --- 1. SETUP PHASE ---
         current_dir = df['Close_vs_Close4'].iloc[i]
         
+        # Extract single scalar value to prevent ambiguity
+        if isinstance(current_dir, pd.Series):
+            current_dir = current_dir.iloc[0]
+            
         if current_dir != 0 and current_dir == setup_direction:
             setup_count += 1
         else:
@@ -51,32 +58,30 @@ def apply_td_sequential(df):
             
         df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_count * setup_direction
         
-        # When Setup hits 9, record signal and activate the Countdown phase
         if setup_count == 9:
-            # 1 = Buy Setup (Price dropping), -1 = Sell Setup (Price rising)
             signal_dir = 1 if setup_direction == -1 else -1
             df.iloc[i, df.columns.get_loc('Setup_Signal')] = signal_dir
             
-            # Start/Restart the Countdown phase
             active_countdown_dir = signal_dir
             countdown_count = 0 
-            setup_count = 0 # Reset setup to look for fresh 9s
+            setup_count = 0 
             
-        # --- 2. COUNTDOWN PHASE (Looking for 13) ---
+        # --- 2. COUNTDOWN PHASE ---
         if active_countdown_dir != 0 and i >= 2:
-            # Buy Countdown: Close must be <= True Low 2 bars prior
-            if active_countdown_dir == 1 and df['Close'].iloc[i] <= df['Low'].iloc[i-2]:
+            # Use the squeezed series for comparisons
+            current_close = close_series.iloc[i]
+            if isinstance(current_close, pd.Series): current_close = current_close.iloc[0]
+                
+            if active_countdown_dir == 1 and current_close <= low_series.iloc[i-2]:
                 countdown_count += 1
-            # Sell Countdown: Close must be >= True High 2 bars prior
-            elif active_countdown_dir == -1 and df['Close'].iloc[i] >= df['High'].iloc[i-2]:
+            elif active_countdown_dir == -1 and current_close >= high_series.iloc[i-2]:
                 countdown_count += 1
                 
             df.iloc[i, df.columns.get_loc('TD_Countdown')] = countdown_count * active_countdown_dir
 
-            # When Countdown hits 13, record signal and reset
             if countdown_count == 13:
                 df.iloc[i, df.columns.get_loc('Countdown_Signal')] = active_countdown_dir
-                active_countdown_dir = 0 # Reset after completion
+                active_countdown_dir = 0 
                 countdown_count = 0
 
     return df
@@ -205,5 +210,6 @@ def apply_bollinger_bands(df, window=20, std=2):
     df['BB_Upper'] = df['BB_Mid'] + (df['Close'].rolling(window=window).std() * std)
     df['BB_Lower'] = df['BB_Mid'] - (df['Close'].rolling(window=window).std() * std)
     return df
+
 
 
