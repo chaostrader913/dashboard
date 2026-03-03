@@ -1,195 +1,88 @@
-
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import matplotlib.pyplot as plt
-import mplfinance as mpf
-import warnings
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from utils.data_loader import fetch_data  # Using our centralized data loader!
 
-# Suppress warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", message=".*MOVING Averages IGNORED.*")
+# --- 1. Terminal UI Styling ---
+st.markdown("### 📊 MODULE: QUAD CHART GRID")
+st.divider()
 
-# --- Page Config ---
-st.set_page_config(layout="wide")
-st.title("Market Intelligence Dashboard")
-
-# --- Expanded Ticker Groups ---
+# --- 2. Ticker Database ---
 TICKER_GROUPS = {
-    'Equities & Indices': {
-        '^GSPC': 'S&P 500', 'SPY': 'S&P 500 ETF', 'VOO': 'Vanguard S&P 500',
-
-        '^IXIC': 'NASDAQ Composite', 'QQQ': 'Nasdaq 100 ETF',
-
-        '^DJI': 'Dow Jones', 'DIA': 'Dow Jones ETF',
-
-        '^RUT': 'Russell 2000', 'IWM': 'Russell 2000 ETF',
-
-        '^VIX': 'Volatility Index', 'VIXY': 'VIX Short-Term Futures'
-    },
-    'Sectors (US)': {
-        'XLK': 'Technology', 'XLV': 'Healthcare', 'XLF': 'Financials',
-        'XLE': 'Energy', 'XLI': 'Industrials', 'XLY': 'Consumer Disc.',
-        'XLC': 'Comm. Services', 'XLP': 'Consumer Staples', 'XLU': 'Utilities',
-        'XLB': 'Materials', 'XLRE': 'Real Estate', 'GLD': 'GOLD ETF'
-    },
-    'International': {
-        'EWJ': 'Japan', 'FXI': 'China (Large Cap)', 'MCHI': 'China (MSCI)',
-        'EWG': 'Germany', 'EWU': 'UK', 'INDA': 'India',
-        'EWW': 'Mexico', 'EWZ': 'Brazil', 'EFA': 'MSCI EAFE (Dev. ex-US)',
-        'IEMG': 'MSCI Em. Markets', 'VGK': 'Europe', 'EWC': 'Canada', 'EWA': 'Australia',
-        'KSA': 'Saudi Arabia'
-    },
-    'Fixed Income': {
-        'SHY': '1-3Y Treasury', 'IEF': '7-10Y Treasury', 'TLT': '20Y+ Treasury',
-        'LQD': 'Inv. Grade Corp', 'HYG': 'High Yield', 'BND': 'Total Bond Market'
-    },
-    'Currencies & Crypto': {
-        'EURUSD=X': 'EUR/USD', 'JPY=X': 'USD/JPY', 'GBPUSD=X': 'GBP/USD',
-        'DX-Y.NYB': 'US Dollar Index', 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum'
-    },
-    'Commodities': {
-        'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil',
-        'NG=F': 'Natural Gas', 'HG=F': 'Copper', 'ZC=F': 'Corn'
-    }
+    'Equities & Indices': {'^GSPC': 'S&P 500', 'QQQ': 'Nasdaq 100 ETF', '^VIX': 'Volatility Index', 'IWM': 'Russell 2000 ETF'},
+    'Sectors (US)': {'XLK': 'Technology', 'XLF': 'Financials', 'XLE': 'Energy', 'XLV': 'Healthcare'},
+    'International': {'FXI': 'China (Large Cap)', 'EWJ': 'Japan', 'EWG': 'Germany', 'INDA': 'India'},
+    'Fixed Income': {'TLT': '20Y+ Treasury', 'IEF': '7-10Y Treasury', 'HYG': 'High Yield', 'LQD': 'Inv. Grade Corp'},
+    'Currencies & Crypto': {'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum', 'EURUSD=X': 'EUR/USD', 'DX-Y.NYB': 'DXY'},
+    'Commodities': {'GC=F': 'Gold', 'CL=F': 'Crude Oil', 'SI=F': 'Silver', 'HG=F': 'Copper'}
 }
 
-# --- Core Logic ---
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_and_resample(ticker, period, interval, custom_days):
-    try:
-        fetch_i = '1d' if interval == 'Custom Days' else interval
-        data = yf.download(ticker, period=period, interval=fetch_i, progress=False, auto_adjust=True)
-        
-        if data is None or data.empty: return None
-        if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-        data.index = pd.to_datetime(data.index)
+# Flatten the dictionary for easy searching in the dropdowns
+ALL_TICKERS = {ticker: f"{ticker} - {name}" for group in TICKER_GROUPS.values() for ticker, name in group.items()}
 
-        if interval == 'Custom Days':
-            logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
-            data = data.resample(f'{custom_days}B').apply(logic).dropna()
+# --- 3. Command Row (User Inputs) ---
+st.sidebar.markdown("### ⚙️ GRID CONTROLS")
+timeframe = st.sidebar.selectbox("TIMEFRAME", options=["1d", "1h", "15m", "5m"], index=0)
 
-        data.index.name = 'Date'
-        return data.dropna()
-    except Exception:
-        return None
+st.sidebar.markdown("#### SCREEN ALLOCATION")
+# Default to a classic macro dashboard: SPY, Gold, Oil, Bitcoin
+screen_1 = st.sidebar.selectbox("SCREEN 1 (TOP LEFT)", options=ALL_TICKERS.keys(), format_func=lambda x: ALL_TICKERS[x], index=list(ALL_TICKERS.keys()).index('^GSPC'))
+screen_2 = st.sidebar.selectbox("SCREEN 2 (TOP RIGHT)", options=ALL_TICKERS.keys(), format_func=lambda x: ALL_TICKERS[x], index=list(ALL_TICKERS.keys()).index('GC=F'))
+screen_3 = st.sidebar.selectbox("SCREEN 3 (BOT LEFT)", options=ALL_TICKERS.keys(), format_func=lambda x: ALL_TICKERS[x], index=list(ALL_TICKERS.keys()).index('CL=F'))
+screen_4 = st.sidebar.selectbox("SCREEN 4 (BOT RIGHT)", options=ALL_TICKERS.keys(), format_func=lambda x: ALL_TICKERS[x], index=list(ALL_TICKERS.keys()).index('BTC-USD'))
 
-def plot_single_asset(ticker, name, data, gold_df, chart_type, style, rel_gold, show_sma, show_vol):
-    tech_types = {'OHLC': 'ohlc', 'Candlestick (Raw)': 'candle', 'Renko': 'renko', 'Point and Figure': 'pnf'}
+overlays = st.sidebar.multiselect("OVERLAYS", options=["EMA 20", "EMA 50"], default=["EMA 20"])
+
+# --- 4. Plotly Chart Generator ---
+def create_terminal_chart(ticker_symbol, df, title_name):
+    """Generates a standalone, dark-themed Plotly candlestick chart with volume"""
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02, row_heights=[0.8, 0.2])
     
-    if chart_type in tech_types:
-        mpf_type = tech_types[chart_type]
-        current_style = style
-        
-        # Style conflict resolution
-        if mpf_type in ['renko', 'pnf'] and style == 'mike':
-            current_style = 'yahoo'
-
-        kwargs = dict(
-            type=mpf_type, 
-            style=current_style, 
-            show_nontrading=False, 
-            returnfig=True,
-            title=f"{name} ({ticker})"
-        )
-        
-        if show_sma and mpf_type not in ['renko', 'pnf']: 
-            kwargs['mav'] = (20,)
-        if show_vol and 'Volume' in data.columns: 
-            kwargs['volume'] = True
-        if mpf_type == 'renko': 
-            kwargs['renko_params'] = {'brick_size': 'atr'}
-        elif mpf_type == 'pnf': 
-            kwargs['pnf_params'] = {'box_size': 'atr'}
-
-        fig, axlist = mpf.plot(data, **kwargs)
-        return fig
-    else:
-        # Line chart logic
-        fig, ax = plt.subplots(figsize=(6, 4))
-        prices = (data['Close'] / data['Close'].iloc[0]) * 100
-        
-        if rel_gold and gold_df is not None:
-            g_prices = (gold_df['Close'] / gold_df['Close'].iloc[0]) * 100
-            prices = (prices / g_prices.reindex(prices.index).ffill()).bfill() * 100
-
-        ax.plot(prices.index, prices, linewidth=1.5, label='Price')
-        if show_sma: 
-            ax.plot(prices.index, prices.rolling(20).mean(), linestyle='--', label='20 SMA')
-            
-        ax.set_title(f"{name} ({ticker})", fontsize=11)
-        ax.axhline(100, color='gray', alpha=0.3)
-        ax.tick_params(axis='x', rotation=45)
-        if show_sma: ax.legend()
-        plt.tight_layout()
-        return fig
-
-# --- UI Setup (Sidebar) ---
-with st.sidebar:
-    st.header("Controls")
-    period_sel = st.selectbox('Period:', ['1mo', '6mo', '1y', '5y', 'max'], index=2)
-    interval_sel = st.selectbox('Interval:', ['1h', '1d', 'Custom Days', '1wk', '1mo'], index=1)
+    # Candlesticks
+    fig.add_trace(go.Candlestick(
+        x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+        name="Price", increasing_line_color='#00FFAA', decreasing_line_color='#FF4B4B'
+    ), row=1, col=1)
     
-    # Disable day slider based on interval
-    is_custom = (interval_sel == 'Custom Days')
-    day_slider = st.slider('Custom Days:', min_value=2, max_value=30, value=3, disabled=not is_custom)
+    # Overlays
+    if "EMA 20" in overlays:
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'].ewm(span=20).mean(), mode='lines', name='EMA 20', line=dict(color='#00AAFF', width=1)), row=1, col=1)
+    if "EMA 50" in overlays:
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'].ewm(span=50).mean(), mode='lines', name='EMA 50', line=dict(color='#FFBB00', width=1)), row=1, col=1)
+
+    # Volume
+    colors = ['#00FFAA' if row['Close'] >= row['Open'] else '#FF4B4B' for index, row in df.iterrows()]
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Volume'), row=2, col=1)
+
+    # Styling
+    fig.update_layout(
+        title=dict(text=f"{title_name} ({ticker_symbol})", font=dict(color="#E0E6ED", size=14)),
+        template="plotly_dark", paper_bgcolor="#0E1117", plot_bgcolor="#0E1117",
+        margin=dict(l=10, r=10, t=40, b=10), height=350, xaxis_rangeslider_visible=False, showlegend=False,
+        font=dict(family="Courier New, monospace", color="#E0E6ED")
+    )
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#2B3040', zeroline=False)
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#2B3040', zeroline=False)
     
-    st.divider()
-    chart_sel = st.selectbox('Chart:', ['Line', 'OHLC', 'Candlestick (Raw)', 'Renko', 'Point and Figure'], index=2)
-    style_sel = st.selectbox('Style:', ['yahoo', 'nightclouds', 'blueskies', 'mike'], index=0)
-    
-    st.divider()
-    sma_check = st.checkbox('SMA (20)', value=True)
-    vol_check = st.checkbox('Volume', value=True)
-    rel_gold = st.checkbox('Rel. Gold', value=False)
-    
-    st.divider()
-    custom_ticker_input = st.text_input('Custom Search:', placeholder='AAPL, TSLA, NVDA...')
+    return fig
 
-# Fetch Gold baseline if needed
-gold_df = fetch_and_resample('GC=F', period_sel, interval_sel, day_slider) if rel_gold else None
+# --- 5. Render the Quad Grid ---
+screens = [screen_1, screen_2, screen_3, screen_4]
 
-# --- Main App Execution ---
+# Create a 2x2 layout
+col1, col2 = st.columns(2)
+grid_cols = [col1, col2, col1, col2]
 
-# 1. Custom Search Rendering
-if custom_ticker_input:
-    st.subheader("Custom Search Results")
-    search_list = [t.strip().upper() for t in custom_ticker_input.split(',') if t.strip()]
-    
-    cols = st.columns(3)
-    for i, ticker in enumerate(search_list):
-        with st.spinner(f"Loading {ticker}..."):
-            data = fetch_and_resample(ticker, period_sel, interval_sel, day_slider)
-            
-            if data is not None and not data.empty:
-                fig = plot_single_asset(ticker, ticker, data, gold_df, chart_sel, style_sel, rel_gold, sma_check, vol_check)
-                with cols[i % 3]:
-                    st.pyplot(fig)
-                    plt.close(fig) # Prevent memory leaks
-            else:
-                with cols[i % 3]:
-                    st.warning(f"No data for {ticker}")
-    st.divider()
-
-# 2. Tabbed Rendering
-tabs = st.tabs(list(TICKER_GROUPS.keys()))
-
-for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
-    with tab:
-        cols = st.columns(3)
-        for i, (ticker, name) in enumerate(tickers.items()):
-            data = fetch_and_resample(ticker, period_sel, interval_sel, day_slider)
-            
-            if data is not None and not data.empty:
-                fig = plot_single_asset(ticker, name, data, gold_df, chart_sel, style_sel, rel_gold, sma_check, vol_check)
-                with cols[i % 3]:
-                    st.pyplot(fig)
-                    plt.close(fig) # Prevent memory leaks
-            else:
-                 with cols[i % 3]:
-
-                    st.warning(f"No data for {ticker}")
-
-
-
-
+for i, ticker in enumerate(screens):
+    with grid_cols[i]:
+        with st.container(border=True):
+            with st.spinner(f"Loading {ticker}..."):
+                # Use our centralized data loader
+                data = fetch_data(ticker, interval=timeframe, period="1y" if timeframe == "1d" else "30d")
+                
+                if data is not None and not data.empty:
+                    fig = create_terminal_chart(ticker, data, ALL_TICKERS[ticker].split(' - ')[1])
+                    st.plotly_chart(fig, use_container_width=True, key=f"chart_{i}_{ticker}")
+                else:
+                    st.error(f"ERR: DATA FEED OFFLINE FOR {ticker}")
