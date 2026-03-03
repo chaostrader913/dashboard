@@ -42,6 +42,33 @@ if data is None or data.empty:
 if "TD Sequential" in overlays:
     data = apply_td_sequential(data)
 if "Auto Trendlines" in overlays:
+    data = apply_advanced_trendlines(data)
+if "Bollinger Bands" in overlays:
+    data = apply_bollinger_bands(data)
+if "RSI Divergence" in oscillators:
+    data = apply_rsi_divergence(data)
+if "MACD" in oscillators:
+    data = apply_macd(data)
+
+# --- 4. Dynamic Charting Engine ---
+# Calculate how many rows we need based on selected oscillators
+total_rows = 1 + len(oscillators)
+# Price chart gets 60% of height, oscillators share the remaining 40%
+row_heights = [0.6] + [0.4 / len(oscillators)] * len(oscillators) if oscillators else [1.0]
+
+fig = make_subplots(
+    rows=total_rows, cols=1, shared_xaxes=True, 
+    vertical_spacing=0.03, row_heights=row_heights
+)
+
+# [ROW 1] BASE PRICE CHART
+fig.add_trace(go.Candlestick(
+    x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
+    name="Price", increasing_line_color='#00FFAA', decreasing_line_color='#FF4B4B'
+), row=1, col=1)
+
+# [ROW 1] OVERLAYS
+if "Auto Trendlines" in overlays:
     # 1. Fetch the validated Amibroker lines
     # (pct_limit=10 means it will only draw lines within 10% of the current price)
     upper_lines, lower_lines = apply_advanced_trendlines(data, window=5, pct_limit=10.0, breaks_limit=2)
@@ -71,36 +98,7 @@ if "Auto Trendlines" in overlays:
             hoverinfo='skip',
             showlegend=False
         ), row=1, col=1)
-if "Bollinger Bands" in overlays:
-    data = apply_bollinger_bands(data)
-if "RSI Divergence" in oscillators:
-    data = apply_rsi_divergence(data)
-if "MACD" in oscillators:
-    data = apply_macd(data)
-
-# --- 4. Dynamic Charting Engine ---
-# Calculate how many rows we need based on selected oscillators
-total_rows = 1 + len(oscillators)
-# Price chart gets 60% of height, oscillators share the remaining 40%
-row_heights = [0.6] + [0.4 / len(oscillators)] * len(oscillators) if oscillators else [1.0]
-
-fig = make_subplots(
-    rows=total_rows, cols=1, shared_xaxes=True, 
-    vertical_spacing=0.03, row_heights=row_heights
-)
-
-# [ROW 1] BASE PRICE CHART
-fig.add_trace(go.Candlestick(
-    x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
-    name="Price", increasing_line_color='#00FFAA', decreasing_line_color='#FF4B4B'
-), row=1, col=1)
-
-# [ROW 1] OVERLAYS
-if "Auto Trendlines" in overlays:
-    # connectgaps=True draws a line straight through the NaN values between pivots!
-    fig.add_trace(go.Scatter(x=data.index, y=data['Pivot_High'], mode='lines', name='Resist', line=dict(color='#FF4B4B', dash='dot', width=2), connectgaps=True), row=1, col=1)
-    fig.add_trace(go.Scatter(x=data.index, y=data['Pivot_Low'], mode='lines', name='Support', line=dict(color='#00FFAA', dash='dot', width=2), connectgaps=True), row=1, col=1)
-
+        
 if "Bollinger Bands" in overlays:
     fig.add_trace(go.Scatter(x=data.index, y=data['BB_Upper'], mode='lines', name='BB Up', line=dict(color='#4B4BFF', width=1)), row=1, col=1)
     fig.add_trace(go.Scatter(x=data.index, y=data['BB_Lower'], mode='lines', name='BB Low', line=dict(color='#4B4BFF', width=1)), row=1, col=1)
