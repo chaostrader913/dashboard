@@ -78,13 +78,20 @@ if "Bollinger Bands" in overlays:
     fig.add_trace(go.Scatter(x=data.index, y=data['BB_Lower'], mode='lines', name='BB Low', line=dict(color='#4B4BFF', width=1)), row=1, col=1)
 
 if "TD Sequential" in overlays:
-    # Filter only the completed '9' counts
-    td_buy = data[data['Signal'] == 1]
-    td_sell = data[data['Signal'] == -1]
-    # Plot '9' below the low for buys, above the high for sells
-    fig.add_trace(go.Scatter(x=td_buy.index, y=td_buy['Low'] * 0.98, mode='text', text='9', textfont=dict(color='#00FFAA', size=14, family='Courier New'), name='TD Buy'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=td_sell.index, y=td_sell['High'] * 1.02, mode='text', text='9', textfont=dict(color='#FF4B4B', size=14, family='Courier New'), name='TD Sell'), row=1, col=1)
+    # 1. Plot the Setup '9's
+    td_setup_buy = data[data['Setup_Signal'] == 1]
+    td_setup_sell = data[data['Setup_Signal'] == -1]
+    
+    fig.add_trace(go.Scatter(x=td_setup_buy.index, y=td_setup_buy['Low'] * 0.98, mode='text', text='9', textfont=dict(color='#00FFAA', size=13, family='Courier New'), name='TD Buy 9'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=td_setup_sell.index, y=td_setup_sell['High'] * 1.02, mode='text', text='9', textfont=dict(color='#FF4B4B', size=13, family='Courier New'), name='TD Sell 9'), row=1, col=1)
 
+    # 2. Plot the Countdown '13's (Slightly larger and pushed further away from the candle)
+    td_cd_buy = data[data['Countdown_Signal'] == 1]
+    td_cd_sell = data[data['Countdown_Signal'] == -1]
+    
+    fig.add_trace(go.Scatter(x=td_cd_buy.index, y=td_cd_buy['Low'] * 0.96, mode='text', text='13', textfont=dict(color='#00FFAA', size=16, family='Courier New'), name='TD Buy 13'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=td_cd_sell.index, y=td_cd_sell['High'] * 1.04, mode='text', text='13', textfont=dict(color='#FF4B4B', size=16, family='Courier New'), name='TD Sell 13'), row=1, col=1)
+    
 # [ROWS 2+] OSCILLATORS
 current_row = 2
 
