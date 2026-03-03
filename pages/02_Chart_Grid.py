@@ -19,7 +19,7 @@ st.set_page_config(layout="wide", page_title="Macro Market Grid")
 st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
 st.caption("INSTITUTIONAL SNAPSHOT ENGINE // STABLE BUILD")
 
-# --- 2. Ticker Database (Updated) ---
+# --- 2. Institutional Ticker Database ---
 TICKER_GROUPS = {
     'Indices (US)': {
         '^GSPC': 'S&P 500', '^DJI': 'Dow Jones', 'QQQ': 'Nasdaq 100', 'IWM': 'Russell 2000',
@@ -57,7 +57,7 @@ TICKER_GROUPS = {
 def get_chart_image(ticker, data, style, show_tdsq, show_rsi):
     apds = []
     
-    # TDSQ Overlays (Green 9s)
+    # TDSQ Overlays
     if show_tdsq and 'Setup_Signal' in data.columns:
         b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
         s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
@@ -66,7 +66,7 @@ def get_chart_image(ticker, data, style, show_tdsq, show_rsi):
         if not np.isnan(s9).all(): 
             apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
         
-    # RSI Divergence Overlays (Blue Up Arrow)
+    # RSI Divergence Overlays
     if show_rsi and 'Signal' in data.columns:
         rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.95, np.nan)
         if not np.isnan(rsi_b).all(): 
@@ -91,8 +91,6 @@ with st.sidebar:
     st.markdown("#### INDICATORS")
     td_on = st.checkbox("TDSQ (9 Count)", value=True)
     rsi_on = st.checkbox("RSI Bullish Div", value=True)
-    
-    st.caption("Note: Charts load sequentially to ensure data integrity.")
 
 # --- 5. Execution Loop ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
@@ -102,11 +100,17 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
         cols = st.columns(cols_count)
         for i, (ticker, name) in enumerate(tickers.items()):
             with cols[i % cols_count]:
-                # Sequential fetch handles diverse ticker types (Index vs ETF vs Stock) safely
+                # Sequential fetch ensures data stability
                 data = fetch_data(ticker, "1d", period)
                 
                 if data is not None and not data.empty:
-                    # Apply logic
+                    # Sanitize data types for mpf compatibility
+                    data.index = pd.to_datetime(data.index)
+                    for col in ['Open', 'High', 'Low', 'Close']:
+                        data[col] = pd.to_numeric(data[col], errors='coerce')
+                    data = data.dropna(subset=['Close'])
+
+                    # Apply indicators
                     data = apply_td_sequential(data)
                     data = apply_rsi_divergence(data)
                     
@@ -119,7 +123,7 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     st.markdown(f"**{name}**")
                     st.markdown(f"`{ticker}`: **${last_p:,.2f}** (:{color}[{chg:+.2f}%])")
                     
-                    # Render Image
+                    # Render Chart
                     img = get_chart_image(ticker, data, style_sel, td_on, rsi_on)
                     st.image(img, use_container_width=True)
                 else:
