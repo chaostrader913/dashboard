@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 st.set_page_config(layout="wide", page_title="Macro Market Grid")
 
 st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
-st.caption("INSTITUTIONAL SNAPSHOT ENGINE // STABLE BUILD")
+st.caption("INSTITUTIONAL SNAPSHOT ENGINE // MINIMALIST VIEW")
 
 # --- 2. Institutional Ticker Database ---
 TICKER_GROUPS = {
@@ -57,7 +57,6 @@ TICKER_GROUPS = {
 def get_chart_image(ticker, data, style, show_tdsq, show_rsi):
     apds = []
     
-    # TDSQ Overlays
     if show_tdsq and 'Setup_Signal' in data.columns:
         b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
         s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
@@ -66,7 +65,6 @@ def get_chart_image(ticker, data, style, show_tdsq, show_rsi):
         if not np.isnan(s9).all(): 
             apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
         
-    # RSI Divergence Overlays
     if show_rsi and 'Signal' in data.columns:
         rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.95, np.nan)
         if not np.isnan(rsi_b).all(): 
@@ -100,11 +98,10 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
         cols = st.columns(cols_count)
         for i, (ticker, name) in enumerate(tickers.items()):
             with cols[i % cols_count]:
-                # Sequential fetch ensures data stability
                 data = fetch_data(ticker, "1d", period)
                 
                 if data is not None and not data.empty:
-                    # Sanitize data types for mpf compatibility
+                    # Basic data cleaning for mpf
                     data.index = pd.to_datetime(data.index)
                     for col in ['Open', 'High', 'Low', 'Close']:
                         data[col] = pd.to_numeric(data[col], errors='coerce')
@@ -114,17 +111,11 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     data = apply_td_sequential(data)
                     data = apply_rsi_divergence(data)
                     
-                    # Header Info
-                    last_p = data['Close'].iloc[-1]
-                    prev_p = data['Close'].iloc[-2] if len(data) > 1 else last_p
-                    chg = ((last_p - prev_p) / prev_p) * 100
-                    color = "green" if chg >= 0 else "red"
-                    
-                    st.markdown(f"**{name}**")
-                    st.markdown(f"`{ticker}`: **${last_p:,.2f}** (:{color}[{chg:+.2f}%])")
+                    # Header: Minimalist Name Only
+                    st.markdown(f"**{name} ({ticker})**")
                     
                     # Render Chart
                     img = get_chart_image(ticker, data, style_sel, td_on, rsi_on)
                     st.image(img, use_container_width=True)
                 else:
-                    st.error(f"Data Error: {ticker}")
+                    st.error(f"Error: {ticker}")
