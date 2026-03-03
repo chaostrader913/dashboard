@@ -1,55 +1,77 @@
 import streamlit as st
+import datetime
 
-st.set_page_config(page_title="技术分析平台", page_icon="📈", layout="wide")
+# 1. Page Configuration (Must be the first Streamlit command)
+st.set_page_config(
+    page_title="Trading Terminal | Home",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# 主页内容
-st.title("📈 技术分析平台")
+# 2. Header Section
+st.title("⚡ Algorithmic Trading Terminal")
+st.markdown(
+    "Welcome to the platform. Select a module from the sidebar to begin analysis, "
+    "or review the current system status below."
+)
+st.divider()
 
-# 欢迎信息
-st.markdown("""
-## 欢迎使用技术分析平台
+# 3. Simulated System Status (Adds to the "Terminal" aesthetic)
+st.subheader("System Status")
+metric_cols = st.columns(4)
+with metric_cols[0]:
+    st.metric(label="Market Data Feed", value="Connected", delta="0ms latency", delta_color="normal")
+with metric_cols[1]:
+    st.metric(label="Active Strategies", value="4", delta="1 newly deployed", delta_color="normal")
+with metric_cols[2]:
+    st.metric(label="Last Database Sync", value=datetime.datetime.now().strftime("%H:%M:%S"), delta="-2 mins", delta_color="off")
+with metric_cols[3]:
+    st.metric(label="Scanner Status", value="Idle", delta="Awaiting input", delta_color="off")
 
-本平台提供以下功能：
+st.write("") # Spacer
 
-### 📊 图表网格
-- 同时监控多只股票的技术形态
-- 自定义网格布局和显示指标
-- 快速对比不同股票走势
+# 4. Platform Modules (The 5 Segments)
+st.subheader("Platform Modules")
 
-### 🔍 信号扫描仪
-- 全市场扫描技术信号
-- 自定义扫描条件
-- 实时结果展示和导出
-
-### 📈 指标演示
-- 单个指标的详细说明
-- 参数可调交互式图表
-- 实时数据演示
-""")
-
-# 快速启动
-st.subheader("🚀 快速启动")
-
-col1, col2, col3 = st.columns(3)
+# Row 1 of Modules
+col1, col2 = st.columns(2)
 
 with col1:
-    st.info("### 📊 图表网格")
-    st.markdown("同时监控多只股票")
-    if st.button("打开图表网格", key="btn_grid"):
-        st.switch_page("pages/02_Chart_Grid.py")
+    with st.container(border=True):
+        st.markdown("### 📈 1. Chart Grid")
+        st.write("Synchronized multi-asset visualization. Monitor up to 4 distinct tickers simultaneously with linked crosshairs and real-time data updates.")
+        # Optional: Add a button to navigate (requires the exact file path from your st.navigation setup)
+        if st.button("Launch Chart Grid", use_container_width=True):
+            st.switch_page("pages/02_Chart_Grid.py")
 
 with col2:
-    st.info("### 🔍 信号扫描仪")
-    st.markdown("发现交易机会")
-    if st.button("打开信号扫描仪", key="btn_scanner"):
-        st.switch_page("pages/03_Signal_Scanner.py")
+    with st.container(border=True):
+        st.markdown("### 📡 2. Signal Scanner")
+        st.write("Real-time algorithmic pattern detection. Scan the universe of assets for technical breakouts, RSI divergences, and volume anomalies.")
+        if st.button("Launch Scanner", use_container_width=True):
+            st.switch_page("pages/03_Signal_Scanner.py")
+
+# Row 2 of Modules
+col3, col4 = st.columns(2)
 
 with col3:
-    st.info("### 📈 指标演示")
-    st.markdown("学习技术指标")
-    if st.button("查看指标", key="btn_indicators"):
-        st.switch_page("pages/01_MACD.py")
+    with st.container(border=True):
+        st.markdown("### ⏱️ 3. MTF Grid (Single Asset)")
+        st.write("Multiple Timeframe analysis. Deep dive into a single ticker across the 1m, 5m, 1H, and Daily charts to align macro trends with micro entries.")
+        if st.button("Launch MTF Grid", use_container_width=True):
+             # Update this path when you create the file
+            st.warning("Navigate via sidebar (Link pending)")
 
-# 最近信号预览
-st.subheader("🔥 热门信号")
-# 这里可以添加缓存的热门信号
+with col4:
+    with st.container(border=True):
+        st.markdown("### ⚙️ 4. Strategy Backtesting & Optimizer")
+        st.write("Historical simulation engine. Test your custom logic against historical data, calculate Drawdown/Sharpe ratios, and optimize parameters.")
+        if st.button("Launch Backtester", use_container_width=True):
+            st.warning("Navigate via sidebar (Link pending)")
+
+# Row 3 (TBC)
+with st.container(border=True):
+    st.markdown("### 🧪 5. Alpha Labs (TBC)")
+    st.write("Experimental models, machine learning sentiment analysis, and order book heatmaps. *Currently in active development.*")
+    st.progress(30, text="Development Progress: 30%")
