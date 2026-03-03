@@ -16,14 +16,93 @@ st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
 st.caption("STATIC SNAPSHOT ENGINE // BIRD'S EYE VIEW")
 st.divider()
 
-# ... [Keep your TICKER_GROUPS dictionary here] ...
+# --- 2. Ticker Database ---
+TICKER_GROUPS = {
+    'Equities & Indices': {
+        '^GSPC': 'S&P 500', 'QQQ': 'Nasdaq 100 ETF', '^DJI': 'Dow Jones', 
+        'IWM': 'Russell 2000 ETF', '^VIX': 'Volatility Index'
+    },
+    'Sectors (US)': {
+        'XLK': 'Technology', 'XLV': 'Healthcare', 'XLF': 'Financials',
+        'XLE': 'Energy', 'XLI': 'Industrials', 'XLY': 'Consumer Disc.'
+    },
+    'International': {
+        'EWJ': 'Japan', 'FXI': 'China (Large Cap)', 'EWG': 'Germany', 
+        'EWU': 'UK', 'INDA': 'India', 'EEM': 'Emerging Markets'
+    },
+    'Fixed Income': {
+        'SHY': '1-3Y Treasury', 'IEF': '7-10Y Treasury', 'TLT': '20Y+ Treasury',
+        'LQD': 'Inv. Grade Corp', 'HYG': 'High Yield'
+    },
+    'Currencies & Crypto': {
+        'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum', 'EURUSD=X': 'EUR/USD', 
+        'JPY=X': 'USD/JPY', 'DX-Y.NYB': 'US Dollar Index'
+    },
+    'Commodities': {
+        'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil',
+        'NG=F': 'Natural Gas', 'HG=F': 'Copper'
+    }
+}
 
-# --- 2. Plotting Engine ---
+# --- 3. Plotting Engine ---
 def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol):
-    # ... [Keep your plot_single_asset function EXACTLY the same as the previous message] ...
-    pass # (Placeholder so you don't have to copy paste the whole block again)
+    tech_types = {'OHLC': 'ohlc', 'Candlestick': 'candle', 'Renko': 'renko', 'Point and Figure': 'pnf'}
+    
+    if chart_type in tech_types:
+        mpf_type = tech_types[chart_type]
+        current_style = style
+        
+        # Style conflict resolution for P&F / Renko
+        if mpf_type in ['renko', 'pnf'] and style == 'mike':
+            current_style = 'yahoo'
 
-# --- 3. Sidebar Controls ---
+        kwargs = dict(
+            type=mpf_type, 
+            style=current_style, 
+            show_nontrading=False, 
+            returnfig=True,
+            title=f"{name} ({ticker})",
+            figsize=(5, 3.5) # Compact for grid viewing
+        )
+        
+        if show_sma and mpf_type not in ['renko', 'pnf']: 
+            kwargs['mav'] = (20,)
+        if show_vol and 'Volume' in data.columns: 
+            kwargs['volume'] = True
+        if mpf_type == 'renko': 
+            kwargs['renko_params'] = {'brick_size': 'atr'}
+        elif mpf_type == 'pnf': 
+            kwargs['pnf_params'] = {'box_size': 'atr'}
+
+        # Generate plot
+        fig, axlist = mpf.plot(data, **kwargs)
+        
+        # Force dark background to match terminal if nightclouds is selected
+        if style == 'nightclouds':
+            fig.patch.set_facecolor('#0E1117')
+            
+        return fig
+    else:
+        # Fallback Line Chart
+        fig, ax = plt.subplots(figsize=(5, 3.5))
+        prices = data['Close']
+        ax.plot(prices.index, prices, linewidth=1.5, color='#00FFAA' if style=='nightclouds' else 'blue')
+        if show_sma: 
+            ax.plot(prices.index, prices.rolling(20).mean(), linestyle='--', color='gray', alpha=0.7)
+            
+        ax.set_title(f"{name} ({ticker})", fontsize=10, color='white' if style=='nightclouds' else 'black')
+        if style == 'nightclouds':
+            fig.patch.set_facecolor('#0E1117')
+            ax.set_facecolor('#0E1117')
+            ax.tick_params(colors='white')
+            for spine in ax.spines.values():
+                spine.set_edgecolor('#2B3040')
+                
+        ax.tick_params(axis='x', rotation=45)
+        plt.tight_layout()
+        return fig
+
+# --- 4. Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ GRID CONTROLS")
     period_sel = st.selectbox('PERIOD', ['1mo', '3mo', '6mo', '1y', '2y'], index=1)
@@ -40,7 +119,7 @@ with st.sidebar:
     sma_check = st.checkbox('OVERLAY: 20 SMA', value=True)
     vol_check = st.checkbox('SHOW VOLUME', value=True)
 
-# --- 4. Main App Execution (Tabs & Grid) ---
+# --- 5. Main App Execution (Tabs & Grid) ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
 
 for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
@@ -52,7 +131,7 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                 with st.container(border=True):
                     with st.spinner(f"Loading {ticker}..."):
                         
-                        # ---> USE THE CENTRALIZED DATA LOADER <---
+                        # Fetch using our centralized utility
                         data = fetch_data(
                             ticker=ticker, 
                             interval=interval_sel, 
@@ -63,6 +142,6 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                         if data is not None and not data.empty:
                             fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check)
                             st.pyplot(fig)
-                            plt.close(fig) 
+                            plt.close(fig) # Critical to prevent RAM overflow
                         else:
                             st.error(f"ERR: NO DATA FOR {ticker}")
