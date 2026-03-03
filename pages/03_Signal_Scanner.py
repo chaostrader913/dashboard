@@ -41,8 +41,6 @@ if data is None or data.empty:
 # Apply selected mathematical models
 if "TD Sequential" in overlays:
     data = apply_td_sequential(data)
-if "Auto Trendlines" in overlays:
-    data = apply_advanced_trendlines(data)
 if "Bollinger Bands" in overlays:
     data = apply_bollinger_bands(data)
 if "RSI Divergence" in oscillators:
