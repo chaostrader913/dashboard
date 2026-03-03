@@ -19,22 +19,28 @@ def apply_ema_crossover(df, fast_len=9, slow_len=21):
 # --- 2. DeMark Setup (TD Sequential) ---
 def apply_td_sequential(df):
     """
-    Calculates the classic TD Setup (9 consecutive closes higher/lower than the close 4 bars prior).
-    Returns 1 for a Buy Setup 9, -1 for a Sell Setup 9.
+    Calculates both TD Setup (9) and TD Countdown (13).
     """
     df = df.copy()
     df['TD_Setup'] = 0
-    df['Signal'] = 0
+    df['TD_Countdown'] = 0
     
-    # Compare current close to close 4 bars ago
+    # We now separate the signals so the UI can plot '9' and '13' independently
+    df['Setup_Signal'] = 0      # Will trigger 1 (Buy 9) or -1 (Sell 9)
+    df['Countdown_Signal'] = 0  # Will trigger 1 (Buy 13) or -1 (Sell 13)
+    
+    # Setup Logic: Close vs Close 4 bars ago
     df['Close_vs_Close4'] = np.where(df['Close'] > df['Close'].shift(4), 1, 
                                      np.where(df['Close'] < df['Close'].shift(4), -1, 0))
     
-    # Iterate to build the sequential count (1 to 9)
     setup_count = 0
     setup_direction = 0
     
+    countdown_count = 0
+    active_countdown_dir = 0 # Tracks if we are looking for Buy 13s or Sell 13s
+
     for i in range(4, len(df)):
+        # --- 1. SETUP PHASE (Looking for 9) ---
         current_dir = df['Close_vs_Close4'].iloc[i]
         
         if current_dir != 0 and current_dir == setup_direction:
@@ -45,14 +51,35 @@ def apply_td_sequential(df):
             
         df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_count * setup_direction
         
-        # Trigger Signal on an exact 9 count
+        # When Setup hits 9, record signal and activate the Countdown phase
         if setup_count == 9:
-            df.iloc[i, df.columns.get_loc('Signal')] = -1 if setup_direction == 1 else 1
-            # Reset after a 9 is found
-            setup_count = 0 
+            # 1 = Buy Setup (Price dropping), -1 = Sell Setup (Price rising)
+            signal_dir = 1 if setup_direction == -1 else -1
+            df.iloc[i, df.columns.get_loc('Setup_Signal')] = signal_dir
             
-    return df
+            # Start/Restart the Countdown phase
+            active_countdown_dir = signal_dir
+            countdown_count = 0 
+            setup_count = 0 # Reset setup to look for fresh 9s
+            
+        # --- 2. COUNTDOWN PHASE (Looking for 13) ---
+        if active_countdown_dir != 0 and i >= 2:
+            # Buy Countdown: Close must be <= True Low 2 bars prior
+            if active_countdown_dir == 1 and df['Close'].iloc[i] <= df['Low'].iloc[i-2]:
+                countdown_count += 1
+            # Sell Countdown: Close must be >= True High 2 bars prior
+            elif active_countdown_dir == -1 and df['Close'].iloc[i] >= df['High'].iloc[i-2]:
+                countdown_count += 1
+                
+            df.iloc[i, df.columns.get_loc('TD_Countdown')] = countdown_count * active_countdown_dir
 
+            # When Countdown hits 13, record signal and reset
+            if countdown_count == 13:
+                df.iloc[i, df.columns.get_loc('Countdown_Signal')] = active_countdown_dir
+                active_countdown_dir = 0 # Reset after completion
+                countdown_count = 0
+
+    return df
 # --- 3. RSI & Automated Divergence ---
 def apply_rsi_divergence(df, rsi_period=14, lookback=20):
     """
@@ -125,3 +152,4 @@ def apply_bollinger_bands(df, window=20, std=2):
     df['BB_Upper'] = df['BB_Mid'] + (df['Close'].rolling(window=window).std() * std)
     df['BB_Lower'] = df['BB_Mid'] - (df['Close'].rolling(window=window).std() * std)
     return df
+
