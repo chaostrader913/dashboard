@@ -191,3 +191,4 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     st.warning(f"No data for {ticker}")
 
 
+
