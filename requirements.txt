@@ -3,7 +3,9 @@ yfinance
 numpy
 scipy
 pandas
+pandas-ta
 matplotlib
 mplfinance
 plotly
+
 
