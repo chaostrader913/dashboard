@@ -11,7 +11,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*MOVING Averages IGNORED.*")
 
 # --- Page Config ---
-st.set_page_config(page_title="Market Intelligence Dashboard", layout="wide")
+st.set_page_config(layout="wide")
 st.title("Market Intelligence Dashboard")
 
 # --- Expanded Ticker Groups ---
@@ -189,6 +189,7 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                  with cols[i % 3]:
 
                     st.warning(f"No data for {ticker}")
+
 
 
 
