@@ -108,4 +108,20 @@ def get_pivot_points(df, window=5):
     df.loc[df.index[highs], 'Pivot_High'] = df['High'].iloc[highs]
     df.loc[df.index[lows], 'Pivot_Low'] = df['Low'].iloc[lows]
     
+
+    return df
+
+# Add to utils/indicators.py
+def apply_macd(df, fast=12, slow=26, signal=9):
+    df = df.copy()
+    df['MACD'] = df['Close'].ewm(span=fast, adjust=False).mean() - df['Close'].ewm(span=slow, adjust=False).mean()
+    df['MACD_Signal'] = df['MACD'].ewm(span=signal, adjust=False).mean()
+    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+    return df
+
+def apply_bollinger_bands(df, window=20, std=2):
+    df = df.copy()
+    df['BB_Mid'] = df['Close'].rolling(window=window).mean()
+    df['BB_Upper'] = df['BB_Mid'] + (df['Close'].rolling(window=window).std() * std)
+    df['BB_Lower'] = df['BB_Mid'] - (df['Close'].rolling(window=window).std() * std)
     return df
