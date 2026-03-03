@@ -1,56 +1,15 @@
 import streamlit as st
 
-st.set_page_config(page_title="技术分析平台", page_icon="📈", layout="wide")
+# 1. Define your pages using st.Page
+# The first argument is the exact file path. 
+# You can optionally add a clean title and an emoji icon for the sidebar.
+page_intro = st.Page("pages/01_intro.py", title="Introduction", icon="🏠")
+page_chart = st.Page("pages/02_Chart_Grid.py", title="Chart Grid", icon="📊")
+page_scanner = st.Page("pages/03_Signal_Scanner.py", title="Signal Scanner", icon="📡")
 
-# 主页内容
-st.title("📈 技术分析平台")
+# 2. Initialize the navigation
+# Passing them in a list dictates the order they appear in the sidebar
+pg = st.navigation([page_intro, page_chart, page_scanner])
 
-# 欢迎信息
-st.markdown("""
-## 欢迎使用技术分析平台
-
-本平台提供以下功能：
-
-### 📊 图表网格
-- 同时监控多只股票的技术形态
-- 自定义网格布局和显示指标
-- 快速对比不同股票走势
-
-### 🔍 信号扫描仪
-- 全市场扫描技术信号
-- 自定义扫描条件
-- 实时结果展示和导出
-
-### 📈 指标演示
-- 单个指标的详细说明
-- 参数可调交互式图表
-- 实时数据演示
-""")
-
-# 快速启动
-st.subheader("🚀 快速启动")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.info("### 📊 图表网格")
-    st.markdown("同时监控多只股票")
-    if st.button("打开图表网格", key="btn_grid"):
-        st.switch_page("pages/02_Chart_Grid.py")
-
-with col2:
-    st.info("### 🔍 信号扫描仪")
-    st.markdown("发现交易机会")
-    if st.button("打开信号扫描仪", key="btn_scanner"):
-        st.switch_page("pages/03_Signal_Scanner.py")
-
-with col3:
-    st.info("### 📈 指标演示")
-    st.markdown("学习技术指标")
-    if st.button("查看指标", key="btn_indicators"):
-        st.switch_page("pages/01_intro.py")
-
-# 最近信号预览
-st.subheader("🔥 热门信号")
-# 这里可以添加缓存的热门信号
-
+# 3. Run the selected page
+pg.run()
