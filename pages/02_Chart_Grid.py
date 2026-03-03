@@ -145,7 +145,7 @@ with st.sidebar:
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
 
-# --- 5. Main App Execution (Tabs & Grid) ---
+# --- 6. Main App Execution (Tabs & Grid) ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
 
 for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
@@ -165,13 +165,22 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
 
         cols = st.columns(cols_count)
         for i, (ticker, name) in enumerate(tickers.items()):
+            # Extract the raw data from the multi-threaded results
             data = results.get(ticker)
             
             with cols[i % cols_count]:
                 if data is not None and not data.empty:
+                    # --- CRITICAL FIX: FLATTEN MULTI-INDEX ---
+                    # This ensures the 'Close' column is 1D before indicator math runs
+                    if isinstance(data.columns, pd.MultiIndex):
+                        data.columns = data.columns.get_level_values(0)
+                    
+                    # Apply indicators
                     if tdsq_check: data = apply_td_sequential(data)
                     if rsi_check: data = apply_rsi_divergence(data)
                         
+                    # Calculate Live Market Context Metrics
+                    # We use .item() or float() to ensure we have a single number
                     last_close = float(data['Close'].iloc[-1])
                     prev_close = float(data['Close'].iloc[-2]) if len(data) > 1 else last_close
                     pct_change = ((last_close - prev_close) / prev_close) * 100
@@ -192,3 +201,4 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                         
                 else:
                     st.error(f"ERR: {ticker} OFFLINE")
+
