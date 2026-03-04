@@ -18,7 +18,7 @@ st.markdown("### 📡 MODULE: ADVANCED SIGNAL SCANNER")
 st.divider()
 
 # --- 2. Command Row (User Inputs) ---
-col1, col2, col3, col4 = st.columns([1.5, 1, 2, 2])
+col1, col2, col3, col4, col5 = st.columns([1.5, 1, 2, 2, 1])
 with col1:
     ticker = st.text_input("TARGET ASSET", value="BTC-USD").upper()
 with col2:
@@ -35,7 +35,13 @@ with col4:
         options=["RSI Divergence", "MACD"],
         default=["RSI Divergence"]
     )
-
+with col5:
+    # New Slider for Trendline Density
+    if "Auto Trendlines" in overlays:
+        max_tl = st.slider("MAX TRENDLINES", min_value=1, max_value=10, value=3)
+    else:
+        max_tl = 3 # Default fallback
+        
 # --- 3. Data Processing & Indicator Application ---
 with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
     data = fetch_data(ticker, interval=timeframe, period="1y" if timeframe == "1d" else "60d")
