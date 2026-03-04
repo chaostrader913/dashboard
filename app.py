@@ -11,8 +11,9 @@ page_mtf = st.Page("pages/04_MTF_Analyzer.py", title="MTF Analyzer", icon="🚀"
 
 # 2. Initialize the navigation
 # Passing them in a list dictates the order they appear in the sidebar
-pg = st.navigation([page_intro, page_chart, page_scanner])
+pg = st.navigation([page_intro, page_chart, page_scanner,page_mtf])
 
 # 3. Run the selected page
 pg.run()
+
 
