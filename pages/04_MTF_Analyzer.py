@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import mplfinance as mpf
+import io
+import matplotlib.pyplot as plt
 
 # --- IMPORT GLOBALS ---
 from utils.data_loader import fetch_data
@@ -11,11 +12,22 @@ from utils.indicators import apply_td_sequential, apply_rsi_divergence
 # --- 1. Page Configuration ---
 st.set_page_config(layout="wide", page_title="Multi-Timeframe Analyzer")
 
-# Custom CSS for Plotly Grid
+# Custom CSS - Updated for Theme Compatibility
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1.5rem; padding-right: 1.5rem; max-width: 100%; }
-    .stPlotlyChart { border: 1px solid #2b3040; border-radius: 8px; overflow: hidden; }
+    
+    /* Adaptable Metric Box */
+    .metric-container { 
+        background-color: rgba(128, 128, 128, 0.1); 
+        padding: 15px; 
+        border-radius: 8px; 
+        border: 1px solid rgba(128, 128, 128, 0.2);
+    }
+    
+    /* Ensure text is legible on both light/dark backgrounds */
+    .sync-label { font-weight: bold; color: inherit; }
+    .status-text { font-size: 0.75rem; font-family: monospace; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -37,72 +49,81 @@ def get_signal_status(df):
     return "⚪ NEUTRAL"
 
 def calculate_confluence(sync_report):
-    """Calculates weighted sentiment for Macro/Mid timeframes."""
+    """Calculates a weighted sentiment score for the 6 core timeframes."""
     weights = {
-        "30M": 5, "1H": 10, "90M": 12, "4H": 18, 
-        "D": 30, "2D": 35, "W": 50, "W-L": 55, "M": 70
+        "30M": 5, "1H": 15, "4H": 25, "D": 40, "W": 60, "M": 80
     }
     total_score = 0
     max_possible = sum(weights.values())
+    
     for label, (df, status) in sync_report.items():
         if df is None: continue
-        w = weights.get(label, 5)
+        w = weights.get(label, 10)
         if "BUY" in status: total_score += w
         elif "SELL" in status: total_score -= w
+            
     return np.clip((total_score / max_possible) * 100, -100, 100)
 
-def generate_trade_summary(score):
-    if score > 65: return "🚀 MACRO TREND OVERLOAD: Heavy buying confluence on institutional timeframes."
-    if score < -65: return "⚠️ SYSTEMIC LIQUIDATION: Multi-day selling pressure remains dominant."
-    if score > 20: return "📈 ACCUMULATION: Mid-curve timeframes flipping bullish."
-    if score < -20: return "📉 DISTRIBUTION: Macro supply hitting the tape."
-    return "🌀 EQUILIBRIUM: Price is oscillating in a fractal range. No clear dominance."
+def generate_trade_summary(score, sync_report):
+    macro_signals = [s for l, (_, s) in sync_report.items() if l in ["D", "W", "M"]]
+    macro_bull = any("BUY" in s for s in macro_signals)
+    
+    if score > 65: return "🚀 CONFLUENT UPTREND: Strong trend stacking. High probability of continuation."
+    if score < -65: return "⚠️ SYSTEMIC WEAKNESS: Heavy selling pressure. Avoid long entries."
+    if macro_bull and score < 0: return "⚖️ MEAN REVERSION: Macro trend is Bullish. Current micro weakness is a pullback."
+    if abs(score) < 15: return "🌀 COMPRESSION: Market is in a squeeze. Look for the 1H/4H breakout."
+    return "🔎 MONITORING: Mixed alignment. Watch the 1H 'Anchor' for trend confirmation."
 
-# --- 3. Configuration (3x3 Grid - Shorter than 29m Removed) ---
+# --- 3. Configuration (6 Core Resolutions) ---
 TIMEFRAMES = [
     {"interval": "30m", "period": "5d",   "label": "30M"},
     {"interval": "60m", "period": "1wk",  "label": "1H"},
-    {"interval": "90m", "period": "2wk",  "label": "90M"},
-    {"interval": "1h",  "period": "1mo",  "label": "4H"}, # 1H proxy for 4H
+    {"interval": "1h",  "period": "1mo",  "label": "4H"}, 
     {"interval": "1d",  "period": "6mo",  "label": "D"},
-    {"interval": "1d",  "period": "1y",   "label": "2D"}, # 1D proxy for 2D
-    {"interval": "1wk", "period": "2y",   "label": "W"},
-    {"interval": "1wk", "period": "5y",   "label": "W-L"},
-    {"interval": "1mo", "period": "5y",   "label": "M"},
+    {"interval": "1wk", "period": "2y",   "label": "W"}, 
+    {"interval": "1mo", "period": "5y",   "label": "M"}, 
 ]
 
 # --- 4. Sidebar ---
 with st.sidebar:
     st.header("🔎 ASSET SYNC")
     ticker = st.text_input("SYMBOL", value="NVDA").upper()
-    theme_color = st.color_picker("CHART ACCENT", "#4b4bff")
+    style_sel = st.selectbox("THEME", ['nightclouds', 'yahoo', 'mike', 'blueskies'], index=0)
     st.divider()
     show_vol = st.checkbox("Show Volume", value=False)
-    st.caption("Lower resolutions (<30m) filtered to reduce noise.")
+    st.caption("Core Multi-Timeframe Analysis (30M - Monthly).")
 
 # --- 5. Main Content Execution ---
 if ticker:
     st.markdown(f"### 🧭 MTF FRACTAL SYNC: {ticker}")
     
     sync_report = {}
-    with st.spinner(f"Synchronizing macro resolutions for {ticker}..."):
+    with st.spinner(f"Synchronizing 6 resolutions for {ticker}..."):
         for tf in TIMEFRAMES:
             raw_data = fetch_data(ticker, tf['interval'], tf['period'])
+            
             if raw_data is not None and not raw_data.empty:
                 data = raw_data.copy()
+                
+                # Surgical Sanitization
                 if isinstance(data.columns, pd.MultiIndex):
                     try: data = data.xs(ticker, axis=1, level=1)
                     except: data.columns = data.columns.get_level_values(0)
                 
-                # Cleanup
+                # Duplicate & Timezone Cleaning
                 data.index = pd.to_datetime(data.index).tz_localize(None)
-                if tf['interval'] in ['1d', '1wk', '1mo']: data.index = data.index.normalize()
+                if tf['interval'] in ['1d', '1wk', '1mo']:
+                    data.index = data.index.normalize()
                 data = data[~data.index.duplicated(keep='last')]
+                
+                # Numeric Enforcement
                 for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-                    if col in data.columns: data[col] = pd.to_numeric(data[col].squeeze(), errors='coerce')
+                    if col in data.columns:
+                        data[col] = pd.to_numeric(data[col].squeeze(), errors='coerce')
+                
                 data = data.dropna(subset=['Close'])
-
-                if len(data) > 10:
+                
+                if len(data) > 15:
                     data = apply_td_sequential(data)
                     data = apply_rsi_divergence(data)
                     sync_report[tf['label']] = (data, get_signal_status(data))
@@ -111,32 +132,54 @@ if ticker:
             else:
                 sync_report[tf['label']] = (None, "⚪ OFFLINE")
 
-    # --- TOP SYNC STRIP ---
+    # --- TOP SYNC STRIP (HEATMAP) ---
+    # Using columns with standard markdown to let Streamlit handle text color
     h_cols = st.columns(len(TIMEFRAMES))
     for i, (label, (df, status)) in enumerate(sync_report.items()):
+        # Determine color for status only, let label stay default theme color
         color = "#888888" 
-        if "BUY" in status: color = "#00FFAA"
-        elif "SELL" in status: color = "#FF4B4B"
-        elif "DIV" in status: color = "#00AAFF"
+        if "BUY" in status: color = "#00B37E" # Slightly darker green for light mode
+        elif "SELL" in status: color = "#E91E63" # Slightly darker red for light mode
+        elif "DIV" in status: color = "#2196F3" # Standard blue
+        
         with h_cols[i]:
-            st.markdown(f"<div style='text-align:center;'><small><b>{label}</b></small><br><span style='color:{color}; font-size:9px;'>{status}</span></div>", unsafe_allow_html=True)
+            st.markdown(f"**{label}**")
+            st.markdown(f"<span style='color:{color}; font-size:10px; font-weight:bold;'>{status}</span>", unsafe_allow_html=True)
 
     st.divider()
 
     # --- SCOREBOARD ---
     score = calculate_confluence(sync_report)
-    summary = generate_trade_summary(score)
-    gauge_color = "#00FFAA" if score > 20 else "#FF4B4B" if score < -20 else "#888888"
+    summary = generate_trade_summary(score, sync_report)
+    
+    # Gauge Color Logic
+    gauge_color = "#00B37E" if score > 20 else "#E91E63" if score < -20 else "#888888"
     
     m_left, m_right = st.columns([1, 2])
     with m_left:
-        st.markdown(f"""<div style="background-color: #1a1c24; padding: 15px; border-radius: 8px; border-left: 5px solid {gauge_color};"><h4 style="margin:0; color:{gauge_color}; font-size: 14px;">MACRO CONFLUENCE</h4><p style="margin:0; font-family:monospace; font-size: 28px; font-weight:bold;">{score:+.1f}%</p></div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="metric-container" style="border-left: 5px solid {gauge_color};">
+            <p style="margin:0; font-size: 14px; opacity: 0.8;">MACRO CONFLUENCE</p>
+            <p style="margin:0; font-family:monospace; font-size: 32px; font-weight:bold; color: {gauge_color};">
+                {score:+.1f}%
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
     with m_right:
-        st.markdown(f"""<div style="background-color: #0e1117; padding: 15px; border: 1px solid #2b3040; border-radius: 8px; height: 80px; display: flex; align-items: center;"><p style="margin: 0; font-size: 14px;">{summary}</p></div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="metric-container">
+            <p style="margin: 0; font-size: 15px; font-weight: 500;">{summary}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # --- 6. THE GRID (3x3 Plotly) ---
+    st.write("") 
+
+    # --- 6. THE GRID (2x3 Layout) ---
     cols_per_row = 3
-    for r in range(3):
+    num_rows = 2
+
+    for r in range(num_rows):
         grid_cols = st.columns(cols_per_row)
         for c in range(cols_per_row):
             idx = r * cols_per_row + c
@@ -146,65 +189,45 @@ if ticker:
                 
                 with grid_cols[c]:
                     if data is not None and len(data) > 5:
-                        fig = go.Figure()
-
-                        # Candlesticks
-                        fig.add_trace(go.Candlestick(
-                            x=data.index, open=data['Open'], high=data['High'],
-                            low=data['Low'], close=data['Close'],
-                            name=tf_label, increasing_line_color='#00FFAA', decreasing_line_color='#FF4B4B'
-                        ))
-
-                        # Signals (TD Sequential)
+                        apds = []
                         if 'Setup_Signal' in data.columns:
-                            buy_9 = data[data['Setup_Signal'] == 1]
-                            sell_9 = data[data['Setup_Signal'] == -1]
-                            
-                            fig.add_trace(go.Scatter(
-                                x=buy_9.index, y=buy_9['Low'] * 0.98,
-                                mode='markers+text', text="9", textposition="bottom center",
-                                marker=dict(symbol='triangle-up', color='#00FFAA', size=10),
-                                name='TD Buy 9', hoverinfo='skip'
-                            ))
-                            fig.add_trace(go.Scatter(
-                                x=sell_9.index, y=sell_9['High'] * 1.02,
-                                mode='markers+text', text="9", textposition="top center",
-                                marker=dict(symbol='triangle-down', color='#FF4B4B', size=10),
-                                name='TD Sell 9', hoverinfo='skip'
-                            ))
+                            b9 = np.full(len(data), np.nan)
+                            s9 = np.full(len(data), np.nan)
+                            b_mask = (data['Setup_Signal'] == 1).values
+                            s_mask = (data['Setup_Signal'] == -1).values
+                            b9[b_mask] = data['Low'].values[b_mask] * 0.98
+                            s9[s_mask] = data['High'].values[s_mask] * 1.02
+                            if not np.all(np.isnan(b9)): apds.append(mpf.make_addplot(b9, type='scatter', marker=r'$9$', color='#00B37E', markersize=30))
+                            if not np.all(np.isnan(s9)): apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#E91E63', markersize=30))
+                        
+                        valid_styles = ['binance', 'blueskies', 'brasil', 'charles', 'checkers', 'classic', 'default', 'mike', 'nightclouds', 'sas', 'starsandstripes', 'yahoo']
+                        
+                        # Use 'blueskies' or 'yahoo' if the user is in light mode for better chart visibility
+                        safe_style = style_sel if style_sel in valid_styles else 'charles'
 
-                        # Signals (RSI Div)
-                        if 'Signal' in data.columns:
-                            rsi_div = data[data['Signal'] == 1]
-                            fig.add_trace(go.Scatter(
-                                x=rsi_div.index, y=rsi_div['Low'] * 0.96,
-                                mode='markers', marker=dict(symbol='star', color='#00AAFF', size=8),
-                                name='RSI Div', hoverinfo='skip'
-                            ))
-
-                        # Layout Tuning
-                        fig.update_layout(
-                            template='plotly_dark',
-                            title=dict(text=f"<b>{tf_label}</b>", x=0.05, y=0.9, font=dict(size=14)),
-                            xaxis_rangeslider_visible=False,
-                            showlegend=False,
-                            margin=dict(l=5, r=5, t=30, b=5),
-                            height=350,
-                            paper_bgcolor='rgba(0,0,0,0)',
-                            plot_bgcolor='rgba(0,0,0,0)',
-                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=True),
-                            yaxis=dict(showgrid=True, gridcolor='#2b3040', zeroline=False, side='right')
-                        )
-
-                        # Signal Border via Annotation (Simulated)
-                        if "BUY" in status or "SELL" in status:
-                            b_color = "#00FFAA" if "BUY" in status else "#FF4B4B"
-                            fig.update_layout(
-                                shapes=[dict(type="rect", xref="paper", yref="paper", x0=0, y0=0, x1=1, y1=1, line=dict(color=b_color, width=3))]
+                        try:
+                            v_on = show_vol if 'Volume' in data.columns and not data['Volume'].isna().all() else False
+                            fig, axlist = mpf.plot(
+                                data, type='candle', style=safe_style, volume=v_on,
+                                returnfig=True, figsize=(5, 3.5), tight_layout=True,
+                                addplot=apds if apds else None, xrotation=0, axisoff=True
                             )
+                            # Title inside chart - using darker colors for labels
+                            axlist[0].set_title(tf_label, fontsize=14, color='gray', loc='left', pad=-20)
+                            
+                            if "BUY" in status or "SELL" in status:
+                                b_color = "#00B37E" if "BUY" in status else "#E91E63"
+                                rect = plt.Rectangle((0,0), 1, 1, fill=False, color=b_color, lw=3, transform=fig.transFigure)
+                                fig.patches.append(rect)
 
-                        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                            buf = io.BytesIO()
+                            # facecolor='none' allows the chart to blend with the app background
+                            fig.savefig(buf, format="png", dpi=100, bbox_inches='tight', facecolor='none')
+                            st.image(buf, use_container_width=True)
+                            plt.close(fig)
+                        except:
+                            st.error(f"Render Error {tf_label}")
                     else:
                         st.error(f"OFFLINE: {tf_label}")
 else:
-    st.info("👈 Enter a ticker symbol in the sidebar to synchronize resolutions.")
+    st.info("👈 Enter a ticker symbol in the sidebar to begin analysis.")
