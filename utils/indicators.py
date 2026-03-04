@@ -127,15 +127,18 @@ import numpy as np
 import pandas as pd
 from scipy.signal import argrelextrema
 
-def apply_advanced_trendlines(df, window=5, pct_limit=5.0, breaks_limit=2):
+import numpy as np
+import pandas as pd
+from scipy.signal import argrelextrema
+
+def apply_advanced_trendlines(df, window=5, pct_limit=5.0, breaks_limit=2, max_lines=3):
     """
-    Translates the Amibroker Auto Trendlines logic (v2.0.2).
-    Evaluates all swing points, calculates slopes, and filters out broken lines.
-    Returns lists of valid coordinates to plot.
+    Identifies valid trendlines, scores them by length/significance, 
+    and returns only the top N lines to prevent chart clutter.
     """
     df = df.copy()
     
-    # 1. Identify Swing Highs and Lows
+    # Increase the window to find only major swing points (macro fractals)
     highs = argrelextrema(df['High'].values, np.greater_equal, order=window)[0]
     lows = argrelextrema(df['Low'].values, np.less_equal, order=window)[0]
     
@@ -149,30 +152,21 @@ def apply_advanced_trendlines(df, window=5, pct_limit=5.0, breaks_limit=2):
             idx1, idx2 = highs[i], highs[j]
             y1, y2 = df['High'].iloc[idx1], df['High'].iloc[idx2]
             
-            # Trendlines must slope downwards for resistance (usually) 
-            # but we evaluate all to be safe.
             slope = (y2 - y1) / (idx2 - idx1)
-            
-            # Where is this line right now (at the current live candle)?
             end_y = y1 + slope * ((len(df) - 1) - idx1)
             
-            # Amibroker Rule 1: Is the line near the current price?
             if abs(1 - (end_y / last_close)) * 100 <= pct_limit:
                 breaks = 0
-                
-                # Amibroker Rule 2: Does price break this line in the future?
                 for k in range(idx2 + 1, len(df)):
                     projected_y = y1 + slope * (k - idx1)
-                    # If a close price breaks above the resistance line
                     if df['Close'].iloc[k] > projected_y:
                         breaks += 1
-                    
                     if breaks > breaks_limit:
-                        break # Line is invalid, stop checking
+                        break 
                         
                 if breaks <= breaks_limit:
-                    # Save the start and end coordinates for Plotly
-                    valid_upper_lines.append(((df.index[idx1], y1), (df.index[-1], end_y)))
+                    line_length = (len(df) - 1) - idx1 # Score by how long the line has survived
+                    valid_upper_lines.append((line_length, ((df.index[idx1], y1), (df.index[-1], end_y))))
                     
     # --- Lower Trendlines (Support) ---
     for i in range(len(lows)):
@@ -185,17 +179,23 @@ def apply_advanced_trendlines(df, window=5, pct_limit=5.0, breaks_limit=2):
             
             if abs(1 - (end_y / last_close)) * 100 <= pct_limit:
                 breaks = 0
-                
                 for k in range(idx2 + 1, len(df)):
                     projected_y = y1 + slope * (k - idx1)
-                    # If a close price breaks below the support line
                     if df['Close'].iloc[k] < projected_y:
                         breaks += 1
-                        
                     if breaks > breaks_limit:
                         break 
                         
                 if breaks <= breaks_limit:
-                    valid_lower_lines.append(((df.index[idx1], y1), (df.index[-1], end_y)))
+                    line_length = (len(df) - 1) - idx1
+                    valid_lower_lines.append((line_length, ((df.index[idx1], y1), (df.index[-1], end_y))))
                     
-    return valid_upper_lines, valid_lower_lines
+    # Sort by length (descending) and keep only the top `max_lines`
+    valid_upper_lines.sort(key=lambda x: x[0], reverse=True)
+    valid_lower_lines.sort(key=lambda x: x[0], reverse=True)
+    
+    # Strip out the length score, returning just the coordinates for Plotly
+    top_upper = [coords for length, coords in valid_upper_lines[:max_lines]]
+    top_lower = [coords for length, coords in valid_lower_lines[:max_lines]]
+    
+    return top_upper, top_lower
