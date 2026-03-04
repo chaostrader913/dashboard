@@ -47,13 +47,14 @@ def calculate_confluence(sync_report):
     """Calculates a weighted sentiment score across resolutions."""
     weights = {
         "1M": 1, "5M": 2, "15M": 4, "30M": 6, 
-        "1H": 10, "4H": 15, "D": 25, 
-        "W": 40, "M": 50
+        "1H": 10, "2H": 12, "4H": 15, "D": 25, 
+        "D-LONG": 30, "W": 40, "M": 50
     }
     total_score = 0
     max_possible = sum(weights.values())
     
-    for label, (_, status) in sync_report.items():
+    for label, (df, status) in sync_report.items():
+        if df is None: continue
         w = weights.get(label, 5)
         if "BUY" in status: total_score += w
         elif "SELL" in status: total_score -= w
@@ -67,13 +68,10 @@ def generate_trade_summary(score, sync_report):
     
     macro_bull = any("BUY" in s for s in macro_signals)
     macro_bear = any("SELL" in s for s in macro_signals)
-    micro_bull = any("BUY" in s for s in micro_signals)
-    micro_bear = any("SELL" in s for s in micro_signals)
     
     if score > 65: return "🚀 CONFLUENT UPTREND: Trend stacking detected. High probability of continuation."
     if score < -65: return "⚠️ SYSTEMIC WEAKNESS: Selling pressure across all resolutions. Avoid longs."
-    if macro_bull and micro_bear: return "⚖️ MEAN REVERSION: Macro trend is Bullish, but Micro is overextended. Buy the dip."
-    if macro_bear and micro_bull: return "🩸 DEAD CAT BOUNCE: Macro trend is Bearish. Short-term strength is likely a trap."
+    if macro_bull and score < 0: return "⚖️ MEAN REVERSION: Macro trend is Bullish, but Micro is overextended. Buy the dip."
     if abs(score) < 15: return "🌀 COMPRESSION: Market is in a fractal squeeze. Wait for 4H/Daily direction."
     return "🔎 MONITORING: Mixed alignment. Look for the 1H 'Anchor' to flip direction."
 
@@ -109,13 +107,29 @@ if ticker:
     sync_report = {}
     with st.spinner(f"Synchronizing 12 resolutions for {ticker}..."):
         for tf in TIMEFRAMES:
-            data = fetch_data(ticker, tf['interval'], tf['period'])
-            if data is not None and not data.empty:
-                # We use .copy() to prevent SettingWithCopy warnings across resolutions
-                df = data.copy()
-                df = apply_td_sequential(df)
-                df = apply_rsi_divergence(df)
-                sync_report[tf['label']] = (df, get_signal_status(df))
+            raw_data = fetch_data(ticker, tf['interval'], tf['period'])
+            
+            if raw_data is not None and not raw_data.empty:
+                # --- SURGICAL SANITIZATION ---
+                data = raw_data.copy()
+                
+                # 1. Handle MultiIndex (Squeeze to 1D)
+                if isinstance(data.columns, pd.MultiIndex):
+                    try: data = data.xs(ticker, axis=1, level=1)
+                    except: data.columns = data.columns.get_level_values(0)
+                
+                # 2. Force Floats & Datetime
+                data.index = pd.to_datetime(data.index)
+                for col in ['Open', 'High', 'Low', 'Close']:
+                    if col in data.columns:
+                        data[col] = pd.to_numeric(data[col].squeeze(), errors='coerce')
+                
+                data = data.dropna(subset=['Close'])
+                
+                # 3. Apply Indicators
+                data = apply_td_sequential(data)
+                data = apply_rsi_divergence(data)
+                sync_report[tf['label']] = (data, get_signal_status(data))
             else:
                 sync_report[tf['label']] = (None, "⚪ OFFLINE")
 
@@ -136,26 +150,25 @@ if ticker:
     score = calculate_confluence(sync_report)
     summary = generate_trade_summary(score, sync_report)
     
-    # Gauge Color Logic
     gauge_color = "#00FFAA" if score > 20 else "#FF4B4B" if score < -20 else "#888888"
     
     m_left, m_right = st.columns([1, 2])
     with m_left:
         st.markdown(f"""
         <div style="background-color: #1a1c24; padding: 15px; border-radius: 8px; border-left: 5px solid {gauge_color};">
-            <h4 style="margin:0; color:{gauge_color};">FRACTAL CONFLUENCE</h4>
+            <h4 style="margin:0; color:{gauge_color}; font-size: 14px;">FRACTAL CONFLUENCE</h4>
             <p style="margin:0; font-family:monospace; font-size: 28px; font-weight:bold;">{score:+.1f}%</p>
         </div>
         """, unsafe_allow_html=True)
     
     with m_right:
         st.markdown(f"""
-        <div style="background-color: #0e1117; padding: 15px; border: 1px solid #2b3040; border-radius: 8px; height: 75px; display: flex; align-items: center;">
-            <p style="margin: 0; font-size: 15px;">{summary}</p>
+        <div style="background-color: #0e1117; padding: 15px; border: 1px solid #2b3040; border-radius: 8px; height: 80px; display: flex; align-items: center;">
+            <p style="margin: 0; font-size: 14px;">{summary}</p>
         </div>
         """, unsafe_allow_html=True)
 
-    st.write("") # Spacing
+    st.write("") 
 
     # --- 6. THE GRID (4x3 Layout) ---
     for row in range(3):
@@ -167,38 +180,42 @@ if ticker:
                 data, status = sync_report[tf_label]
                 
                 with grid_cols[col]:
-                    if data is not None:
-                        # Prepare Addplots
+                    if data is not None and not data.empty:
+                        # Prepare Addplots (Flattening results to 1D to prevent validator crash)
                         apds = []
                         if 'Setup_Signal' in data.columns:
-                            b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
-                            s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
+                            b9 = np.where(data['Setup_Signal'].values == 1, data['Low'].values * 0.98, np.nan).flatten()
+                            s9 = np.where(data['Setup_Signal'].values == -1, data['High'].values * 1.02, np.nan).flatten()
                             if not np.all(np.isnan(b9)): apds.append(mpf.make_addplot(b9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=25))
                             if not np.all(np.isnan(s9)): apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#FF4B4B', markersize=25))
                         
-                        # Plot Generation
-                        fig, axlist = mpf.plot(
-                            data, type='candle', style=style_sel, volume=show_vol,
-                            returnfig=True, figsize=(4, 2.5), tight_layout=True,
-                            addplot=apds if apds else None, xrotation=0,
-                            axisoff=True, # Minimalist look for grid
-                        )
-                        
-                        # Title inside the chart
-                        axlist[0].set_title(tf_label, fontsize=12, color='white', loc='left', pad=-15)
-                        
-                        # Border highlight for active signals
-                        if "BUY" in status or "SELL" in status:
-                            border_color = "#00FFAA" if "BUY" in status else "#FF4B4B"
-                            rect = plt.Rectangle((0,0), 1, 1, fill=False, color=border_color, lw=3, transform=fig.transFigure)
-                            fig.patches.append(rect)
+                        # Use a safe fallback for styles
+                        valid_styles = ['binance', 'blueskies', 'brasil', 'charles', 'checkers', 'classic', 'default', 'mike', 'nightclouds', 'sas', 'starsandstripes', 'yahoo']
+                        safe_style = style_sel if style_sel in valid_styles else 'charles'
 
-                        buf = io.BytesIO()
-                        fig.savefig(buf, format="png", dpi=85, bbox_inches='tight', facecolor=fig.get_facecolor())
-                        st.image(buf, use_container_width=True)
-                        plt.close(fig)
+                        try:
+                            fig, axlist = mpf.plot(
+                                data, type='candle', style=safe_style, volume=show_vol,
+                                returnfig=True, figsize=(4, 2.5), tight_layout=True,
+                                addplot=apds if apds else None, xrotation=0,
+                                axisoff=True
+                            )
+                            
+                            axlist[0].set_title(tf_label, fontsize=12, color='white', loc='left', pad=-15)
+                            
+                            if "BUY" in status or "SELL" in status:
+                                b_color = "#00FFAA" if "BUY" in status else "#FF4B4B"
+                                rect = plt.Rectangle((0,0), 1, 1, fill=False, color=b_color, lw=3, transform=fig.transFigure)
+                                fig.patches.append(rect)
+
+                            buf = io.BytesIO()
+                            fig.savefig(buf, format="png", dpi=85, bbox_inches='tight', facecolor=fig.get_facecolor())
+                            st.image(buf, use_container_width=True)
+                            plt.close(fig)
+                        except Exception as e:
+                            st.error(f"Render Error {tf_label}")
                     else:
-                        st.error(f"ERR: {tf_label}")
+                        st.error(f"OFFLINE: {tf_label}")
 
 else:
     st.info("👈 Enter a ticker symbol in the sidebar to synchronize resolutions.")
