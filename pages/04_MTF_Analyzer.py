@@ -165,15 +165,30 @@ if ticker:
             
             with cols[i]:
                 if data is not None:
-                    apds = []
-                    
-                    # SAFETY CHECK: Only plot TD9 overlays on Time-Based Candlestick charts
-                    if selected_type == 'candle' and 'Setup_Signal' in data.columns:
-                        b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.99, np.nan)
-                        s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.01, np.nan)
-                        if not np.all(np.isnan(b9)): apds.append(mpf.make_addplot(b9, type='scatter', marker='^', color='#00FFAA', markersize=30))
-                        if not np.all(np.isnan(s9)): apds.append(mpf.make_addplot(s9, type='scatter', marker='v', color='#FF4B4B', markersize=30))
+                    apds = []                    
+                    # SAFETY CHECK: Only plot overlays on Time-Based Candlestick charts
+                    if selected_type == 'candle':
+                        
+                        # 1. TD Setup (9) - Closest to the candle
+                        if 'Setup_Signal' in data.columns:
+                            b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.99, np.nan)
+                            s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.01, np.nan)
+                            if not np.all(np.isnan(b9)): apds.append(mpf.make_addplot(b9, type='scatter', marker='^', color='#00FFAA', markersize=30))
+                            if not np.all(np.isnan(s9)): apds.append(mpf.make_addplot(s9, type='scatter', marker='v', color='#FF4B4B', markersize=30))
 
+                        # 2. TD Countdown (13) - Pushed slightly further out
+                        if 'Countdown_Signal' in data.columns:
+                            b13 = np.where(data['Countdown_Signal'] == 1, data['Low'] * 0.975, np.nan)
+                            s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.025, np.nan)
+                            if not np.all(np.isnan(b13)): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#00AAFF', markersize=80))
+                            if not np.all(np.isnan(s13)): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#FFAA00', markersize=80))
+
+                        # 3. RSI Divergence - Pushed furthest out, marked with a Star
+                        if 'Signal' in data.columns:
+                            div_bull = np.where(data['Signal'] == 1, data['Low'] * 0.96, np.nan)
+                            if not np.all(np.isnan(div_bull)): apds.append(mpf.make_addplot(div_bull, type='scatter', marker='*', color='#00FFAA', markersize=60))
+
+                    # Combine args
                     plot_kwargs = {
                         "type": selected_type, 
                         "style": style_sel, 
@@ -187,8 +202,9 @@ if ticker:
 
                     # Generate the Chart
                     fig, axlist = mpf.plot(data, **plot_kwargs)
-                    # 🔥 ADD THIS LINE: Kills the empty space before the first candle and after the last
-                    axlist[0].margins(x=0)
+                    
+                    # Kill empty space before/after data
+                    axlist[0].margins(x=0) 
                     
                     # Custom inner title block
                     axlist[0].text(
@@ -207,6 +223,7 @@ if ticker:
                         fig.patch.set_linewidth(4)
                         fig.patch.set_edgecolor(rect_color)
 
+                    # Aggressively crop invisible chart margins
                     buf = io.BytesIO()
                     fig.savefig(
                         buf, 
@@ -214,11 +231,11 @@ if ticker:
                         dpi=100, 
                         facecolor=fig.get_facecolor(), 
                         bbox_inches='tight', 
-                        pad_inches=0  # <--- This kills the dead space
+                        pad_inches=0
                     )
-                    # 🔥 UPDATE THIS LINE: Forces the image to fill 100% of the column width
                     st.image(buf, use_container_width=True)
-                    plt.close(fig) 
+                    plt.close(fig)
+                    
                 else:
                     st.warning(f"{label} No Data")
 
