@@ -164,11 +164,24 @@ if ticker:
                         if not np.all(np.isnan(b9)): apds.append(mpf.make_addplot(b9, type='scatter', marker='^', color='#00FFAA', markersize=20))
                         if not np.all(np.isnan(s9)): apds.append(mpf.make_addplot(s9, type='scatter', marker='v', color='#FF4B4B', markersize=20))
 
-                    fig, axlist = mpf.plot(
-                        data, type='candle', style=style_sel, volume=show_vol,
-                        figsize=(5, 3.5), tight_layout=True, returnfig=True,
-                        addplot=apds if apds else None, axisoff=True
-                    )
+
+                    # 1. Define your base configuration
+                    plot_kwargs = {
+                        "type": "candle", 
+                        "style": style_sel, 
+                        "volume": show_vol,
+                        "figsize": (5, 3.5), 
+                        "tight_layout": True, 
+                        "returnfig": True,
+                        "axisoff": True
+                    }
+                    
+                    # 2. Only inject 'addplot' if the apds list is populated
+                    if apds:
+                        plot_kwargs["addplot"] = apds
+                    
+                    # 3. Plot by unpacking the kwargs dictionary
+                    fig, axlist = mpf.plot(data, **plot_kwargs)
                     axlist[0].set_title(label, fontsize=14, color='white', loc='left')
                     
                     # Highlight Active signals with a border
