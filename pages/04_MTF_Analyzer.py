@@ -17,20 +17,20 @@ except ImportError:
 # --- 1. Page Configuration ---
 st.set_page_config(layout="wide", page_title="Multi-Timeframe Analyzer")
 
-st.markdown("""
-<style>
-    .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
+# st.markdown("""
+# <style>
+#     .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
     
-    /* 1. Remove horizontal space between columns */
-    div[data-testid="stHorizontalBlock"] { gap: 0rem !important; }
+#     /* 1. Remove horizontal space between columns */
+#     div[data-testid="stHorizontalBlock"] { gap: 0.10rem !important; }
     
-    /* 2. Remove padding inside the columns */
-    div[data-testid="column"] { padding: 0.1rem !important; }
+#     /* 2. Remove padding inside the columns */
+#     div[data-testid="column"] { padding: 0.1rem !important; }
     
-    /* 3. Pull the rows closer together vertically */
-    div[data-testid="stImage"] { margin-bottom: -1.2rem !important; }
-</style>
-""", unsafe_allow_html=True)
+#     /* 3. Pull the rows closer together vertically */
+#     div[data-testid="stImage"] { margin-bottom: -1.2rem !important; }
+# </style>
+# """, unsafe_allow_html=True)
 
 # --- 2. Logic Engines ---
 
@@ -214,7 +214,7 @@ if ticker:
                         dpi=100, 
                         facecolor=fig.get_facecolor(), 
                         bbox_inches='tight', 
-                        pad_inches=10  # <--- This kills the dead space
+                        pad_inches=0  # <--- This kills the dead space
                     )
                     # 🔥 UPDATE THIS LINE: Forces the image to fill 100% of the column width
                     st.image(buf, use_container_width=True)
