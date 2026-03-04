@@ -1,109 +1,138 @@
 import pandas as pd
+import pandas_ta as ta
 import numpy as np
 from scipy.signal import argrelextrema
 
-def apply_td_sequential(df):
-    df = df.copy()
-    # Simple squeeze to handle the yfinance 1-column-dataframe quirk
-    close = df['Close'].squeeze()
-    low = df['Low'].squeeze()
-    high = df['High'].squeeze()
+# --- 1. Standard Indicators (Powered by pandas-ta) ---
 
-    # Setup Logic
-    df['Close_vs_Close4'] = np.where(close > close.shift(4), 1, 
-                                     np.where(close < close.shift(4), -1, 0))
+def apply_macd(df, fast=12, slow=26, signal=9):
+    """Calculates MACD using pandas-ta and standardizes column names."""
+    # append=True automatically adds the columns to your dataframe
+    df.ta.macd(fast=fast, slow=slow, signal=signal, append=True)
+    
+    # Rename the dynamic pandas-ta columns to match our UI expectations
+    df.rename(columns={
+        f"MACD_{fast}_{slow}_{signal}": "MACD",
+        f"MACDh_{fast}_{slow}_{signal}": "MACD_Hist",
+        f"MACDs_{fast}_{slow}_{signal}": "MACD_Signal"
+    }, inplace=True)
+    return df
+
+def apply_bollinger_bands(df, length=20, std=2):
+    """Calculates Bollinger Bands using pandas-ta."""
+    df.ta.bbands(length=length, std=std, append=True)
+    
+    df.rename(columns={
+        f"BBL_{length}_{float(std)}": "BB_Lower",
+        f"BBM_{length}_{float(std)}": "BB_Mid",
+        f"BBU_{length}_{float(std)}": "BB_Upper"
+    }, inplace=True)
+    return df
+
+# --- 2. Advanced / Custom Logic (Kept manual as they are not standard) ---
+
+def apply_rsi_divergence(df, rsi_period=14, lookback=20):
+    """
+    Uses pandas-ta for the base RSI calculation, but retains our custom 
+    scipy geometry logic to find the actual divergence signals.
+    """
+    # 1. Use pandas-ta for the clean RSI calculation
+    df.ta.rsi(length=rsi_period, append=True)
+    df.rename(columns={f"RSI_{rsi_period}": "RSI"}, inplace=True)
+    
+    # 2. Custom Divergence Geometry Logic
+    df['Trough'] = 0
+    troughs = argrelextrema(df['Low'].values, np.less_equal, order=lookback)[0]
+    df.loc[df.index[troughs], 'Trough'] = 1
+    
+    df['Signal'] = 0
+    last_trough_idx = None
+    
+    for i in range(len(df)):
+        if df['Trough'].iloc[i] == 1:
+            if last_trough_idx is not None:
+                # Bullish Regular Divergence
+                if df['Low'].iloc[i] < df['Low'].iloc[last_trough_idx] and df['RSI'].iloc[i] > df['RSI'].iloc[last_trough_idx]:
+                    if df['RSI'].iloc[i] < 40: 
+                        df.iloc[i, df.columns.get_loc('Signal')] = 1
+            last_trough_idx = i
+            
+    return df
+
+def apply_td_sequential(df):
+    """
+    Calculates both TD Setup (9) and TD Countdown (13).
+    """
+    df = df.copy()
+    df['TD_Setup'] = 0
+    df['TD_Countdown'] = 0
+    
+    # We now separate the signals so the UI can plot '9' and '13' independently
+    df['Setup_Signal'] = 0      # Will trigger 1 (Buy 9) or -1 (Sell 9)
+    df['Countdown_Signal'] = 0  # Will trigger 1 (Buy 13) or -1 (Sell 13)
+    
+    # Setup Logic: Close vs Close 4 bars ago
+    df['Close_vs_Close4'] = np.where(df['Close'] > df['Close'].shift(4), 1, 
+                                     np.where(df['Close'] < df['Close'].shift(4), -1, 0))
     
     setup_count = 0
     setup_direction = 0
-    df['Setup_Signal'] = 0
     
+    countdown_count = 0
+    active_countdown_dir = 0 # Tracks if we are looking for Buy 13s or Sell 13s
+
     for i in range(4, len(df)):
+        # --- 1. SETUP PHASE (Looking for 9) ---
         current_dir = df['Close_vs_Close4'].iloc[i]
+        
         if current_dir != 0 and current_dir == setup_direction:
             setup_count += 1
         else:
             setup_count = 1 if current_dir != 0 else 0
             setup_direction = current_dir
+            
+        df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_count * setup_direction
         
+        # When Setup hits 9, record signal and activate the Countdown phase
         if setup_count == 9:
-            df.iloc[i, df.columns.get_loc('Setup_Signal')] = 1 if setup_direction == -1 else -1
-            setup_count = 0
+            # 1 = Buy Setup (Price dropping), -1 = Sell Setup (Price rising)
+            signal_dir = 1 if setup_direction == -1 else -1
+            df.iloc[i, df.columns.get_loc('Setup_Signal')] = signal_dir
+            
+            # Start/Restart the Countdown phase
+            active_countdown_dir = signal_dir
+            countdown_count = 0 
+            setup_count = 0 # Reset setup to look for fresh 9s
+            
+        # --- 2. COUNTDOWN PHASE (Looking for 13) ---
+        if active_countdown_dir != 0 and i >= 2:
+            # Buy Countdown: Close must be <= True Low 2 bars prior
+            if active_countdown_dir == 1 and df['Close'].iloc[i] <= df['Low'].iloc[i-2]:
+                countdown_count += 1
+            # Sell Countdown: Close must be >= True High 2 bars prior
+            elif active_countdown_dir == -1 and df['Close'].iloc[i] >= df['High'].iloc[i-2]:
+                countdown_count += 1
+                
+            df.iloc[i, df.columns.get_loc('TD_Countdown')] = countdown_count * active_countdown_dir
+
+            # When Countdown hits 13, record signal and reset
+            if countdown_count == 13:
+                df.iloc[i, df.columns.get_loc('Countdown_Signal')] = active_countdown_dir
+                active_countdown_dir = 0 # Reset after completion
+                countdown_count = 0
+
     return df
 
-def apply_rsi_divergence(df, rsi_period=14, lookback=20):
+def get_pivot_points(df, window=5):
+    """Kept manual for automatic trendlines via scipy"""
     df = df.copy()
-    close = df['Close'].squeeze()
-    low = df['Low'].squeeze()
-
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(com=rsi_period-1, adjust=False).mean()
-    loss = (-1 * delta.clip(upper=0)).ewm(com=rsi_period-1, adjust=False).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-
-    # Troughs for Bullish Div
-    troughs = argrelextrema(low.values, np.less_equal, order=lookback)[0]
-    df['Signal'] = 0
+    df['Pivot_High'] = np.nan
+    df['Pivot_Low'] = np.nan
     
-    for i in range(len(troughs)):
-        if i == 0: continue
-        curr, prev = troughs[i], troughs[i-1]
-        if low.iloc[curr] < low.iloc[prev] and df['RSI'].iloc[curr] > df['RSI'].iloc[prev]:
-            if df['RSI'].iloc[curr] < 40:
-                df.iloc[curr, df.columns.get_loc('Signal')] = 1
-    return df
-# --- MISSING FUNCTIONS TO APPEND ---
-
-def apply_macd(df, fast=12, slow=26, signal=9):
-    """Calculates MACD, Signal line, and Histogram."""
-    df = df.copy()
-    close = df['Close'].squeeze()
+    highs = argrelextrema(df['High'].values, np.greater_equal, order=window)[0]
+    lows = argrelextrema(df['Low'].values, np.less_equal, order=window)[0]
     
-    exp1 = close.ewm(span=fast, adjust=False).mean()
-    exp2 = close.ewm(span=slow, adjust=False).mean()
-    
-    df['MACD'] = exp1 - exp2
-    df['MACD_Signal'] = df['MACD'].ewm(span=signal, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+    df.loc[df.index[highs], 'Pivot_High'] = df['High'].iloc[highs]
+    df.loc[df.index[lows], 'Pivot_Low'] = df['Low'].iloc[lows]
     
     return df
-
-def apply_bollinger_bands(df, window=20, num_std=2):
-    """Calculates Upper and Lower Bollinger Bands."""
-    df = df.copy()
-    close = df['Close'].squeeze()
-    
-    sma = close.rolling(window=window).mean()
-    std = close.rolling(window=window).std()
-    
-    df['BB_Upper'] = sma + (std * num_std)
-    df['BB_Lower'] = sma - (std * num_std)
-    
-    return df
-
-def apply_advanced_trendlines(df, window=10, pct_limit=5.0, breaks_limit=2, max_lines=3):
-    """
-    Finds local pivot highs/lows and connects them to form trendlines.
-    Returns lists of coordinate tuples: [((start_time, start_price), (end_time, end_price))]
-    """
-    highs = argrelextrema(df['High'].values, np.greater, order=window)[0]
-    lows = argrelextrema(df['Low'].values, np.less, order=window)[0]
-
-    upper_lines = []
-    lower_lines = []
-
-    # Connect the most recent pivot highs (Resistance)
-    for i in range(1, min(len(highs), max_lines + 1)):
-        idx1, idx2 = highs[-i-1], highs[-i]
-        upper_lines.append(
-            ((df.index[idx1], df['High'].iloc[idx1]), (df.index[idx2], df['High'].iloc[idx2]))
-        )
-
-    # Connect the most recent pivot lows (Support)
-    for i in range(1, min(len(lows), max_lines + 1)):
-        idx1, idx2 = lows[-i-1], lows[-i]
-        lower_lines.append(
-            ((df.index[idx1], df['Low'].iloc[idx1]), (df.index[idx2], df['Low'].iloc[idx2]))
-        )
-
-    return upper_lines, lower_lines
