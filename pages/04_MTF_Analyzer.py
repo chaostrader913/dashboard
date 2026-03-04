@@ -16,12 +16,13 @@ except ImportError:
     st.stop()
 
 # --- 1. Page Configuration ---
+# --- 1. Page Configuration ---
 st.set_page_config(layout="wide", page_title="Multi-Timeframe Analyzer")
 
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
-    div[data-testid="stMetric"] { background-color: #1a1c24; padding: 10px; border-radius: 5px; border: 1px solid #2b3040; }
+    /* Removed the black background from stMetric */
     div[data-testid="stHorizontalBlock"] { gap: 0.5rem !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -132,7 +133,7 @@ if ticker:
         elif "SELL" in status: color = "#FF4B4B"
         elif "DIV" in status: color = "#00AAFF"
         with h_cols[i]:
-            st.markdown(f"<div style='text-align:center;'><small><b>{label}</b></small><br><span style='color:{color}; font-size:10px;'>{status.split()[-1]}</span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:center;'><small><b>{label}</b></small><br><span style='color:{color}; font-size:14px;'>{status.split()[-1]}</span></div>", unsafe_allow_html=True)
 
     st.divider()
 
@@ -182,7 +183,16 @@ if ticker:
                     
                     # 3. Plot by unpacking the kwargs dictionary
                     fig, axlist = mpf.plot(data, **plot_kwargs)
-                    axlist[0].set_title(label, fontsize=14, color='white', loc='left')
+                    # Place the label inside the chart area (top-left) with a readable background
+                    axlist[0].text(
+                        0.03, 0.95, f" {label} ", 
+                        transform=axlist[0].transAxes, 
+                        fontsize=12, 
+                        fontweight='bold',
+                        color='white',
+                        verticalalignment='top',
+                        bbox=dict(facecolor='#1a1c24', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.2', zorder=10)
+                    )
                     
                     # Highlight Active signals with a border
                     if "BUY" in status or "SELL" in status:
