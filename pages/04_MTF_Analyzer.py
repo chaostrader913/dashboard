@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg') # Essential for web-server stability
 
-# --- IMPORT GLOBALS (Ensure these files exist in your /utils folder) ---
 try:
     from utils.data_loader import fetch_data
     from utils.indicators import apply_td_sequential, apply_rsi_divergence
@@ -16,13 +15,11 @@ except ImportError:
     st.stop()
 
 # --- 1. Page Configuration ---
-# --- 1. Page Configuration ---
 st.set_page_config(layout="wide", page_title="Multi-Timeframe Analyzer")
 
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
-    /* Removed the black background from stMetric */
     div[data-testid="stHorizontalBlock"] { gap: 0.5rem !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -31,16 +28,13 @@ st.markdown("""
 
 def get_signal_status(df):
     if df is None or df.empty: return "⚪ OFFLINE"
-    
     recent = df.tail(3)
     
-    # Check TD Countdown (Prioritize the most powerful signal)
     if 'Countdown_Signal' in recent.columns:
         last_val = recent['Countdown_Signal'].replace(0, np.nan).ffill().iloc[-1]
         if last_val == 1: return "🔥 TD13 BUY"
         if last_val == -1: return "💀 TD13 SELL"
 
-    # Check TD Setup
     if 'Setup_Signal' in recent.columns:
         last_val = recent['Setup_Signal'].replace(0, np.nan).ffill().iloc[-1]
         if last_val == 1: return "🟢 TD9 BUY"
@@ -52,11 +46,7 @@ def get_signal_status(df):
     return "⚪ NEUTRAL"
 
 def calculate_confluence(sync_report):
-    weights = {
-        "1M": 1, "5M": 2, "15M": 4, "30M": 6, 
-        "1H": 10, "4H": 15, "D": 25, "D-L": 30,
-        "W": 40, "W-L": 45, "M": 50
-    }
+    weights = { "30M": 1, "1H": 2, "4H": 5, "D": 10, "W": 20, "M": 30 }
     total_score = 0
     max_active_weight = 0
     
@@ -71,7 +61,7 @@ def calculate_confluence(sync_report):
 
 def generate_trade_summary(score, sync_report):
     macro_signals = [s for l, (_, s) in sync_report.items() if l in ["D", "W", "M"]]
-    micro_signals = [s for l, (_, s) in sync_report.items() if l in ["1M", "5M", "15M"]]
+    micro_signals = [s for l, (_, s) in sync_report.items() if l in ["30M", "1H", "4H"]]
     
     macro_bull = any("BUY" in s for s in macro_signals)
     macro_bear = any("SELL" in s for s in macro_signals)
@@ -83,31 +73,35 @@ def generate_trade_summary(score, sync_report):
     if macro_bull and micro_bear: return "⚖️ MEAN REVERSION: Macro trend is Bullish, but Micro is overextended. Buy the dip."
     if macro_bear and micro_bull: return "🩸 DEAD CAT BOUNCE: Macro trend is Bearish. Short-term strength is likely a trap."
     if abs(score) < 15: return "🌀 COMPRESSION: Market is in a fractal squeeze. Wait for 4H/Daily direction."
-    return "🔎 MONITORING: Mixed alignment. Look for the 1H 'Anchor' to flip direction."
+    return "🔎 MONITORING: Mixed alignment. Look for the 1H/4H 'Anchor' to flip direction."
 
-# --- 3. Configuration (Fixed duplicate Labels) ---
+# --- 3. Configuration ---
 TIMEFRAMES = [
-    {"interval": "1m",  "period": "1d",   "label": "1M"},
-    {"interval": "5m",  "period": "1d",   "label": "5M"},
-    {"interval": "15m", "period": "2d",   "label": "15M"},
     {"interval": "30m", "period": "5d",   "label": "30M"},
-    {"interval": "1h",  "period": "1wk",  "label": "1H"},
+    {"interval": "1h",  "period": "1mo",  "label": "1H"},
     {"interval": "4h",  "period": "3mo",  "label": "4H"},
-    {"interval": "1d",  "period": "6mo",  "label": "D"},
-    {"interval": "1d",  "period": "2y",   "label": "D-L"},
-    {"interval": "1wk", "period": "1y",   "label": "W"},
-    {"interval": "1wk", "period": "3y",   "label": "W-L"},
-    {"interval": "1mo", "period": "2y",   "label": "M"},
-    {"interval": "1mo", "period": "max",  "label": "MAX"},
+    {"interval": "1d",  "period": "1y",   "label": "D"},
+    {"interval": "1wk", "period": "3y",   "label": "W"},
+    {"interval": "1mo", "period": "5y",   "label": "M"},
 ]
 
 # --- 4. Sidebar ---
 with st.sidebar:
     st.header("🔎 ASSET SYNC")
-    ticker = st.text_input("SYMBOL", value="NVDA").upper()
-    style_sel = st.selectbox("THEME", ['nightclouds', 'yahoo', 'mike', 'blueskies'], index=0)
+    ticker = st.text_input("SYMBOL", value="BTC-USD").upper()
+    
+    # Chart Type Selector
+    chart_sel = st.selectbox("CHART TYPE", ['Candlestick', 'Point & Figure', 'Renko'], index=0)
+    
+    # Theme Selector (Index 2 sets 'mike' as the default)
+    style_sel = st.selectbox("THEME", ['nightclouds', 'yahoo', 'mike', 'blueskies'], index=2)
+    
     st.divider()
     show_vol = st.checkbox("Show Volume", value=False)
+
+# Map UI selection to mplfinance kwargs
+chart_type_map = {'Candlestick': 'candle', 'Point & Figure': 'pnf', 'Renko': 'renko'}
+selected_type = chart_type_map[chart_sel]
 
 # --- 5. Main Content ---
 if ticker:
@@ -133,14 +127,19 @@ if ticker:
         elif "SELL" in status: color = "#FF4B4B"
         elif "DIV" in status: color = "#00AAFF"
         with h_cols[i]:
-            st.markdown(f"<div style='text-align:center;'><small><b>{label}</b></small><br><span style='color:{color}; font-size:14px;'>{status.split()[-1]}</span></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='text-align:center;'>"
+                f"<span style='font-size:16px; font-weight:bold;'>{label}</span><br>"
+                f"<span style='color:{color}; font-size:14px; font-weight:bold;'>{status.split()[-1]}</span>"
+                f"</div>", 
+                unsafe_allow_html=True
+            )
 
     st.divider()
 
     # Sentiment Score
     score = calculate_confluence(sync_report)
     summary = generate_trade_summary(score, sync_report)
-    gauge_color = "#00FFAA" if score > 20 else "#FF4B4B" if score < -20 else "#888888"
     
     c1, c2 = st.columns([1, 3])
     with c1:
@@ -149,45 +148,43 @@ if ticker:
         st.info(summary)
 
     # --- 6. The Grid ---
-    rows = [TIMEFRAMES[i:i+4] for i in range(0, len(TIMEFRAMES), 4)]
+    rows = [TIMEFRAMES[i:i+3] for i in range(0, len(TIMEFRAMES), 3)]
     for row_tfs in rows:
-        cols = st.columns(4)
+        cols = st.columns(3)
         for i, tf_info in enumerate(row_tfs):
             label = tf_info['label']
             data, status = sync_report[label]
+            
             with cols[i]:
                 if data is not None:
                     apds = []
-                    # Plot logic for TD 9s
-                    if 'Setup_Signal' in data.columns:
+                    
+                    # SAFETY CHECK: Only plot TD9 overlays on Time-Based Candlestick charts
+                    if selected_type == 'candle' and 'Setup_Signal' in data.columns:
                         b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.99, np.nan)
                         s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.01, np.nan)
-                        if not np.all(np.isnan(b9)): apds.append(mpf.make_addplot(b9, type='scatter', marker='^', color='#00FFAA', markersize=20))
-                        if not np.all(np.isnan(s9)): apds.append(mpf.make_addplot(s9, type='scatter', marker='v', color='#FF4B4B', markersize=20))
+                        if not np.all(np.isnan(b9)): apds.append(mpf.make_addplot(b9, type='scatter', marker='^', color='#00FFAA', markersize=30))
+                        if not np.all(np.isnan(s9)): apds.append(mpf.make_addplot(s9, type='scatter', marker='v', color='#FF4B4B', markersize=30))
 
-
-                    # 1. Define your base configuration
                     plot_kwargs = {
-                        "type": "candle", 
+                        "type": selected_type, 
                         "style": style_sel, 
                         "volume": show_vol,
-                        "figsize": (5, 3.5), 
+                        "figsize": (5, 3.5),
                         "tight_layout": True, 
                         "returnfig": True,
                         "axisoff": True
                     }
-                    
-                    # 2. Only inject 'addplot' if the apds list is populated
-                    if apds:
-                        plot_kwargs["addplot"] = apds
-                    
-                    # 3. Plot by unpacking the kwargs dictionary
+                    if apds: plot_kwargs["addplot"] = apds
+
+                    # Generate the Chart
                     fig, axlist = mpf.plot(data, **plot_kwargs)
-                    # Place the label inside the chart area (top-left) with a readable background
+                    
+                    # Custom inner title block
                     axlist[0].text(
                         0.03, 0.95, f" {label} ", 
                         transform=axlist[0].transAxes, 
-                        fontsize=12, 
+                        fontsize=14, 
                         fontweight='bold',
                         color='white',
                         verticalalignment='top',
@@ -203,7 +200,7 @@ if ticker:
                     buf = io.BytesIO()
                     fig.savefig(buf, format="png", dpi=100, facecolor=fig.get_facecolor())
                     st.image(buf)
-                    plt.close(fig) # Prevent memory leaks
+                    plt.close(fig) 
                 else:
                     st.warning(f"{label} No Data")
 
