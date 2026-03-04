@@ -187,6 +187,8 @@ if ticker:
 
                     # Generate the Chart
                     fig, axlist = mpf.plot(data, **plot_kwargs)
+                    # 🔥 ADD THIS LINE: Kills the empty space before the first candle and after the last
+                    axlist[0].margins(x=0)
                     
                     # Custom inner title block
                     axlist[0].text(
@@ -214,7 +216,8 @@ if ticker:
                         bbox_inches='tight', 
                         pad_inches=0  # <--- This kills the dead space
                     )
-                    st.image(buf)
+                    # 🔥 UPDATE THIS LINE: Forces the image to fill 100% of the column width
+                    st.image(buf, use_container_width=True)
                     plt.close(fig) 
                 else:
                     st.warning(f"{label} No Data")
