@@ -47,8 +47,8 @@ def calculate_confluence(sync_report):
     """Calculates a weighted sentiment score across resolutions."""
     weights = {
         "1M": 1, "5M": 2, "15M": 4, "30M": 6, 
-        "1H": 10, "2H": 12, "4H": 15, "D": 25, 
-        "D-LONG": 30, "W": 40, "M": 50
+        "1H": 10, "4H": 15, "D": 25, 
+        "W": 40, "M": 50
     }
     total_score = 0
     max_possible = sum(weights.values())
