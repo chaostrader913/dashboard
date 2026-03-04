@@ -61,7 +61,7 @@ with col3:
         st.write("Multiple Timeframe analysis. Deep dive into a single ticker across the 1m, 5m, 1H, and Daily charts to align macro trends with micro entries.")
         if st.button("Launch MTF Grid", use_container_width=True):
              # Update this path when you create the file
-            st.warning("Navigate via sidebar (Link pending)")
+             st.switch_page("pages/04_MTF_Analyzer.py")
 
 with col4:
     with st.container(border=True):
@@ -75,3 +75,4 @@ with st.container(border=True):
     st.markdown("### 🧪 5. Alpha Labs (TBC)")
     st.write("Experimental models, machine learning sentiment analysis, and order book heatmaps. *Currently in active development.*")
     st.progress(30, text="Development Progress: 30%")
+
