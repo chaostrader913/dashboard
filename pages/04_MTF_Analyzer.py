@@ -198,7 +198,14 @@ if ticker:
                         fig.patch.set_edgecolor(rect_color)
 
                     buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=100, facecolor=fig.get_facecolor())
+                    fig.savefig(
+                        buf, 
+                        format="png", 
+                        dpi=100, 
+                        facecolor=fig.get_facecolor(), 
+                        bbox_inches='tight', 
+                        pad_inches=0  # <--- This kills the dead space
+                    )
                     st.image(buf)
                     plt.close(fig) 
                 else:
