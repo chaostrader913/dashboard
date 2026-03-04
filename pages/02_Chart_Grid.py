@@ -168,6 +168,12 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     data = fetch_data(ticker=ticker, interval=interval_sel, period=period_sel, custom_days=day_slider)
                     
                     if data is not None and not data.empty:
+                        # FIX: Flatten MultiIndex columns if they exist
+                        if isinstance(data.columns, pd.MultiIndex):
+                            data.columns = data.columns.get_level_values(0)
+                
+                        # Remove any potential duplicate indices
+                        data = data.loc[~data.index.duplicated(keep='first')]
                         # Apply indicators if selected
                         if tdsq_check:
                             data = apply_td_sequential(data)
@@ -180,3 +186,4 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                         plt.close(fig) 
                     else:
                         st.error(f"ERR: {ticker}")
+
