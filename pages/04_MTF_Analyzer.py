@@ -214,7 +214,7 @@ if ticker:
                         dpi=100, 
                         facecolor=fig.get_facecolor(), 
                         bbox_inches='tight', 
-                        pad_inches=0  # <--- This kills the dead space
+                        pad_inches=10  # <--- This kills the dead space
                     )
                     # 🔥 UPDATE THIS LINE: Forces the image to fill 100% of the column width
                     st.image(buf, use_container_width=True)
