@@ -7,5 +7,6 @@ pandas-ta
 matplotlib
 mplfinance
 plotly
+streamlit-lightweight-charts
 
 
