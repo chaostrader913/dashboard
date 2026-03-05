@@ -219,14 +219,17 @@ if ticker:
                     axlist[0].margins(x=0) 
                     
                     # Custom inner title block
+                    # 🔥 THE WATERMARK
                     axlist[0].text(
-                        0.03, 0.95, f" {label} ", 
-                        transform=axlist[0].transAxes, 
-                        fontsize=14, 
+                        0.5, 0.5, label,                  # X=0.5, Y=0.5 is the exact center
+                        transform=axlist[0].transAxes,    # Use relative axis coordinates
+                        fontsize=70,                      # Massive font size
                         fontweight='bold',
                         color='white',
-                        verticalalignment='top',
-                        bbox=dict(facecolor='#1a1c24', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.2', zorder=10)
+                        alpha=0.06,                       # Make it 94% transparent
+                        ha='center',                      # Horizontally center the text
+                        va='center',                      # Vertically center the text
+                        zorder=0                          # CRITICAL: Pushes the text behind the candles
                     )
                     
                     # Highlight Active signals with a border
