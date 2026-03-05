@@ -8,5 +8,6 @@ matplotlib
 mplfinance
 plotly
 streamlit-lightweight-charts
+streamlit-autorefresh
 
 
