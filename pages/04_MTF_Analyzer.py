@@ -221,12 +221,12 @@ if ticker:
                     fig, axlist = mpf.plot(
                         data, 
                         **plot_kwargs,
-                        hlines=dict(hlines=[current_price], colors=['#888888'], linestyle='dotted', linewidths=1.5, alpha=0.7)
+                        hlines=dict(hlines=[current_price], colors=['#888888'], linestyle='dotted', linewidths=5, alpha=0.7)
                     )                    
 
                     
                     # Kill empty space before/after data
-                    # axlist[0].margins(x=0) 
+                    axlist[0].margins(x=0) 
                     
                     # Custom inner title block
                     # 🔥 THE WATERMARK
