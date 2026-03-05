@@ -226,7 +226,7 @@ if ticker:
                         fontsize=70,                      # Massive font size
                         fontweight='bold',
                         color='white',
-                        alpha=0.06,                       # Make it 94% transparent
+                        alpha=0.20,                       # Make it 94% transparent
                         ha='center',                      # Horizontally center the text
                         va='center',                      # Vertically center the text
                         zorder=0                          # CRITICAL: Pushes the text behind the candles
