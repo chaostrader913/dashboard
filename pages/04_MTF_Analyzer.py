@@ -208,8 +208,18 @@ if ticker:
                         "figsize": (5, 3.5),
                         "tight_layout": True, 
                         "returnfig": True,
-                        "axisoff": True
+                        "xrotation": 15
+                        #"axisoff": True
                     }
+                    # Get the absolute latest closing price
+                    current_price = data['Close'].iloc[-1]
+
+                    # Generate the Chart with the price line added
+                    fig, axlist = mpf.plot(
+                        data, 
+                        **plot_kwargs,
+                        hlines=dict(hlines=[current_price], colors=['#888888'], linestyle='dotted', linewidths=1.5, alpha=0.7)
+                    )                    
                     if apds: plot_kwargs["addplot"] = apds
 
                     # Generate the Chart
