@@ -226,7 +226,7 @@ if ticker:
 
                     
                     # Kill empty space before/after data
-                    axlist[0].margins(x=0) 
+                    # axlist[0].margins(x=0) 
                     
                     # Custom inner title block
                     # 🔥 THE WATERMARK
