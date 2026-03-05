@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import mplfinance as mpf
 import io
+from streamlit_autorefresh import st_autorefresh
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg') # Essential for web-server stability
@@ -106,6 +107,17 @@ with st.sidebar:
     
     st.divider()
     show_vol = st.checkbox("Show Volume", value=False)
+    # Auto-Refresh Toggle
+    st.subheader("⏱️ Live Sync")
+    auto_refresh = st.checkbox("Enable Auto-Refresh", value=False)
+    refresh_rate = st.slider("Refresh Interval (Seconds)", min_value=30, max_value=300, value=60, step=30)
+    
+    if auto_refresh:
+        # interval takes milliseconds, so we multiply the seconds by 1000
+        st_autorefresh(interval=refresh_rate * 1000, limit=None, key="mtf_refresh")
+        st.caption(f"🟢 Polling API every {refresh_rate}s")
+    else:
+        st.caption("🔴 Live Sync Paused")
 
 # Map UI selection to mplfinance kwargs
 chart_type_map = {'Candlestick': 'candle', 'Point & Figure': 'pnf', 'Renko': 'renko'}
