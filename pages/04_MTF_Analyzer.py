@@ -232,10 +232,17 @@ if ticker:
                             alpha=0.7
                         )
                     )
+                    for ax in axlist:
+                        ax.grid(False)
 
-                    
-                    # Kill empty space before/after data
+                    # 1. Strip the default margins to make the left side perfectly flush
                     axlist[0].margins(x=0) 
+                    
+                    # 🔥 2. ADD RIGHT-SIDE PADDING (FORWARD SPACE)
+                    # Grab the current X-axis limits
+                    xmin, xmax = axlist[0].get_xlim()
+                    # Push the right edge out by 8 "bars" of empty space
+                    axlist[0].set_xlim(xmin, xmax + 8)
                     
                     # Custom inner title block
                     # 🔥 THE WATERMARK
