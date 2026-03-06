@@ -43,7 +43,7 @@ with col6:
         
 # --- 3. Data Processing & Indicator Application ---
 with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
-    data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1d" else "60d")
+    data = fetch_data(ticker, interval=timeframe, period="2y" if timeframe == "1d" else "60d")
 
 if data is None or data.empty:
     st.error(f"ERR: NO DATA FOUND FOR {ticker}.")
@@ -139,25 +139,28 @@ if "Volume" in data.columns:
         }
     })
 
-if "Corrected QWMA" in overlays and 'QWMA_Mid' in data.columns:
-    qwma_up = [{"time": get_time(idx), "value": r['QWMA_Upper']} for idx, r in data.iterrows() if pd.notna(r['QWMA_Upper'])]
-    qwma_low = [{"time": get_time(idx), "value": r['QWMA_Lower']} for idx, r in data.iterrows() if pd.notna(r['QWMA_Lower'])]
+# 🔥 EXACT LOXX CORRECTED QWMA LOGIC
+if "Corrected QWMA" in overlays and 'CQWMA' in data.columns:
+    cqwma_up = [{"time": get_time(idx), "value": r['CQWMA_Up']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Up'])]
+    cqwma_dn = [{"time": get_time(idx), "value": r['CQWMA_Down']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Down'])]
+    cqwma_mid = [{"time": get_time(idx), "value": r['CQWMA_Mid']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Mid'])]
     
-    qwma_mid = []
-    prev_val = None
+    # Map the exact Grey/Green/Red logic from the Loxx script
+    cqwma_data = []
     for idx, r in data.iterrows():
-        val = r['QWMA_Mid']
+        val = r['CQWMA']
         if pd.notna(val):
-            if prev_val is not None:
-                color = c_theme["up"] if val > prev_val else (c_theme["down"] if val < prev_val else "#FFBB00")
-            else:
-                color = "#FFBB00"
-            qwma_mid.append({"time": get_time(idx), "value": val, "color": color})
-            prev_val = val
+            c_val = r['CQWMA_Color']
+            color = c_theme["up"] if c_val == 1 else (c_theme["down"] if c_val == 2 else "#888888")
+            cqwma_data.append({"time": get_time(idx), "value": val, "color": color})
 
-    main_series.append({"type": "Line", "data": qwma_up, "options": {"color": c_theme["down"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
-    main_series.append({"type": "Line", "data": qwma_mid, "options": {"lineWidth": 2}})
-    main_series.append({"type": "Line", "data": qwma_low, "options": {"color": c_theme["up"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    # Plot Floating Levels First (so they sit behind the main line)
+    main_series.append({"type": "Line", "data": cqwma_up, "options": {"color": c_theme["up"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": cqwma_mid, "options": {"color": "#888888", "lineWidth": 1, "lineStyle": 3, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": cqwma_dn, "options": {"color": c_theme["down"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    
+    # Plot the Thick Colored Moving Average
+    main_series.append({"type": "Line", "data": cqwma_data, "options": {"lineWidth": 3}})
 
 if "Auto Trendlines" in overlays:
     upper_lines, lower_lines = apply_advanced_trendlines(data, window=5, pct_limit=10.0, breaks_limit=2)
@@ -168,11 +171,10 @@ if "Auto Trendlines" in overlays:
         t1, t2 = get_time(line[0][0]), get_time(line[1][0])
         main_series.append({"type": "Line", "data": [{"time": t1, "value": line[0][1]}, {"time": t2, "value": line[1][1]}], "options": {"color": c_theme["up"], "lineWidth": 1, "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}})
 
-# Register Main Chart
 charts.append({
-    "chartOptions": {
+    "chart": {
         **chart_layout, 
-        "height": 600, # 🔥 Enlarged Price Panel
+        "height": 800, 
         "timeScale": { "visible": price_is_bottom, "timeVisible": True, "secondsVisible": False } 
     },
     "series": main_series
@@ -187,24 +189,29 @@ if has_rsi and 'RSI' in data.columns:
         for idx, r in data[data['Signal'] == 1].iterrows():
             rsi_markers.append({"time": get_time(idx), "position": "belowBar", "color": c_theme["up"], "shape": "arrowUp", "text": "DIV"})
 
+    rsi_dummy_timeline = [{"time": get_time(idx), "value": 50} for idx, r in data.iterrows()]
+
     charts.append({
-        "chartOptions": {
+        "chart": {
             **chart_layout, 
             "height": 180,
             "timeScale": { "visible": rsi_is_bottom, "timeVisible": True, "secondsVisible": False }
         },
-        "series": [{
-            "type": "Line", 
-            "data": rsi_data, 
-            "options": {
-                "color": "#00AAFF", "lineWidth": 1.5,
-                "priceLines": [
-                    {"price": 70, "color": c_theme["down"], "lineStyle": 2, "lineWidth": 1},
-                    {"price": 30, "color": c_theme["up"], "lineStyle": 2, "lineWidth": 1}
-                ]
-            },
-            "markers": rsi_markers
-        }]
+        "series": [
+            {"type": "Line", "data": rsi_dummy_timeline, "options": {"color": "transparent", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
+            {
+                "type": "Line", 
+                "data": rsi_data, 
+                "options": {
+                    "color": "#00AAFF", "lineWidth": 1.5,
+                    "priceLines": [
+                        {"price": 70, "color": c_theme["down"], "lineStyle": 2, "lineWidth": 1},
+                        {"price": 30, "color": c_theme["up"], "lineStyle": 2, "lineWidth": 1}
+                    ]
+                },
+                "markers": rsi_markers
+            }
+        ]
     })
 
 # --- PANE 3: MACD ---
@@ -213,18 +220,17 @@ if has_macd and 'MACD' in data.columns:
     macd_signal = [{"time": get_time(idx), "value": r['MACD_Signal']} for idx, r in data.iterrows() if pd.notna(r['MACD_Signal'])]
     macd_hist = [{"time": get_time(idx), "value": r['MACD_Hist'], "color": c_theme["up"] if r['MACD_Hist'] >= 0 else c_theme["down"]} for idx, r in data.iterrows() if pd.notna(r['MACD_Hist'])]
     
-    # 🔥 The Dummy Line Trick to force MACD time-axis alignment 
     dummy_timeline = [{"time": get_time(idx), "value": 0} for idx, r in data.iterrows()]
 
     charts.append({
-        "chartOptions": {
+        "chart": {
             **chart_layout, 
             "height": 180,
             "timeScale": { "visible": True, "timeVisible": True, "secondsVisible": False }
         },
         "series": [
             {"type": "Line", "data": dummy_timeline, "options": {"color": "transparent", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
-            {"type": "Histogram", "data": macd_hist, "options": {"priceScaleId": ""}},
+            {"type": "Histogram", "data": macd_hist},
             {"type": "Line", "data": macd_line, "options": {"color": "#00AAFF", "lineWidth": 1.5}},
             {"type": "Line", "data": macd_signal, "options": {"color": "#FFBB00", "lineWidth": 1.5}}
         ]
