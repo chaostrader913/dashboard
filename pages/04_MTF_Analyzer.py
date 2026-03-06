@@ -213,16 +213,25 @@ if ticker:
                     }
                     if apds: plot_kwargs["addplot"] = apds
 
-                    # Generate the Chart
-                    # Get the absolute latest closing price
+                    # --- DYNAMIC SUPPORT & RESISTANCE ---
+                    # Calculate the highest high and lowest low of the last 20 closed candles
+                    recent_closed = data[:-1] # Exclude the current, unfinished candle
+                    resistance = recent_closed['High'].rolling(window=20).max().iloc[-1]
+                    support = recent_closed['Low'].rolling(window=20).min().iloc[-1]
                     current_price = data['Close'].iloc[-1]
 
-                    # Generate the Chart with the price line added
+                    # Generate the Chart with the price, support, and resistance lines
                     fig, axlist = mpf.plot(
                         data, 
                         **plot_kwargs,
-                        hlines=dict(hlines=[current_price], colors=['#888888'], linestyle='dotted', linewidths=5, alpha=0.7)
-                    )                    
+                        hlines=dict(
+                            hlines=[current_price, resistance, support], 
+                            colors=['#888888', '#FF4B4B', '#00FFAA'], # Gray (Price), Red (Res), Green (Sup)
+                            linestyle=['dotted', 'dashed', 'dashed'], 
+                            linewidths=[1.5, 1, 1], 
+                            alpha=0.7
+                        )
+                    )
 
                     
                     # Kill empty space before/after data
