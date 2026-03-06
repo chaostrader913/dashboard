@@ -40,10 +40,12 @@ with col5:
 with col6:
     max_tl = st.slider("MAX TRENDLINES", min_value=1, max_value=10, value=3) if "Auto Trendlines" in overlays else 3
     use_log = st.checkbox("Logarithmic Scale", value=True) if timeframe == "1d" else False
+    # 🔥 NEW: Backtest Toggle
+    run_backtest = st.checkbox("Run QWMA Backtest", value=True) if "Corrected QWMA" in overlays else False
         
 # --- 3. Data Processing & Indicator Application ---
 with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
-    data = fetch_data(ticker, interval=timeframe, period="2y" if timeframe == "1d" else "60d")
+    data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1d" else "60d")
 
 if data is None or data.empty:
     st.error(f"ERR: NO DATA FOUND FOR {ticker}.")
@@ -51,9 +53,27 @@ if data is None or data.empty:
 
 # Apply selected mathematical models
 if "TD Sequential" in overlays: data = apply_td_sequential(data)
-if "Corrected QWMA" in overlays: data = apply_corrected_qwma(data)
 if "RSI Divergence" in oscillators: data = apply_rsi_divergence(data)
 if "MACD" in oscillators: data = apply_macd(data)
+
+# 🔥 NEW: QWMA Backtesting Logic
+if "Corrected QWMA" in overlays: 
+    data = apply_corrected_qwma(data)
+    
+    if run_backtest and 'CQWMA_Color' in data.columns:
+        # 1 = Long (Green), 2 = Short (Red), 0 = Neutral/Hold.
+        # We forward fill to hold the current position until an opposite signal fires.
+        pos = data['CQWMA_Color'].replace(0, np.nan).ffill()
+        pos = pos.replace({1: 1, 2: -1}).fillna(0)
+        
+        # Shift by 1 to prevent lookahead bias (trade occurs AFTER the signal candle closes)
+        data['Position'] = pos.shift(1)
+        
+        # Calculate daily strategy returns vs buy and hold
+        data['Strat_Return'] = data['Position'] * data['Close'].pct_change()
+        
+        # Calculate Equity Curve (Starting with $10,000 capital)
+        data['Equity'] = (1 + data['Strat_Return'].fillna(0)).cumprod() * 10000
 
 def get_time(idx):
     return int(pd.Timestamp(idx).timestamp())
@@ -93,11 +113,15 @@ chart_layout = {
     }
 }
 
-# --- DYNAMIC AXIS LOGIC ---
+# --- 🔥 DYNAMIC AXIS LOGIC (UPDATED FOR BACKTEST) ---
 has_rsi = "RSI Divergence" in oscillators
 has_macd = "MACD" in oscillators
-price_is_bottom = not (has_rsi or has_macd)
-rsi_is_bottom = has_rsi and not has_macd
+has_bt = run_backtest
+
+price_is_bottom = not (has_rsi or has_macd or has_bt)
+rsi_is_bottom = has_rsi and not (has_macd or has_bt)
+macd_is_bottom = has_macd and not has_bt
+bt_is_bottom = has_bt
 
 # --- PANE 1: PRICE & OVERLAYS ---
 main_series = []
@@ -139,13 +163,11 @@ if "Volume" in data.columns:
         }
     })
 
-# 🔥 EXACT LOXX CORRECTED QWMA LOGIC
 if "Corrected QWMA" in overlays and 'CQWMA' in data.columns:
     cqwma_up = [{"time": get_time(idx), "value": r['CQWMA_Up']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Up'])]
     cqwma_dn = [{"time": get_time(idx), "value": r['CQWMA_Down']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Down'])]
     cqwma_mid = [{"time": get_time(idx), "value": r['CQWMA_Mid']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Mid'])]
     
-    # Map the exact Grey/Green/Red logic from the Loxx script
     cqwma_data = []
     for idx, r in data.iterrows():
         val = r['CQWMA']
@@ -154,12 +176,9 @@ if "Corrected QWMA" in overlays and 'CQWMA' in data.columns:
             color = c_theme["up"] if c_val == 1 else (c_theme["down"] if c_val == 2 else "#888888")
             cqwma_data.append({"time": get_time(idx), "value": val, "color": color})
 
-    # Plot Floating Levels First (so they sit behind the main line)
     main_series.append({"type": "Line", "data": cqwma_up, "options": {"color": c_theme["up"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
     main_series.append({"type": "Line", "data": cqwma_mid, "options": {"color": "#888888", "lineWidth": 1, "lineStyle": 3, "crosshairMarkerVisible": False}})
     main_series.append({"type": "Line", "data": cqwma_dn, "options": {"color": c_theme["down"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
-    
-    # Plot the Thick Colored Moving Average
     main_series.append({"type": "Line", "data": cqwma_data, "options": {"lineWidth": 3}})
 
 if "Auto Trendlines" in overlays:
@@ -174,7 +193,7 @@ if "Auto Trendlines" in overlays:
 charts.append({
     "chart": {
         **chart_layout, 
-        "height": 800, 
+        "height": 600, 
         "timeScale": { "visible": price_is_bottom, "timeVisible": True, "secondsVisible": False } 
     },
     "series": main_series
@@ -226,13 +245,43 @@ if has_macd and 'MACD' in data.columns:
         "chart": {
             **chart_layout, 
             "height": 180,
-            "timeScale": { "visible": True, "timeVisible": True, "secondsVisible": False }
+            "timeScale": { "visible": macd_is_bottom, "timeVisible": True, "secondsVisible": False }
         },
         "series": [
             {"type": "Line", "data": dummy_timeline, "options": {"color": "transparent", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
             {"type": "Histogram", "data": macd_hist},
             {"type": "Line", "data": macd_line, "options": {"color": "#00AAFF", "lineWidth": 1.5}},
             {"type": "Line", "data": macd_signal, "options": {"color": "#FFBB00", "lineWidth": 1.5}}
+        ]
+    })
+
+# --- 🔥 PANE 4: BACKTEST EQUITY CURVE ---
+if has_bt and 'Equity' in data.columns:
+    baseline_data = [{"time": get_time(idx), "value": r['Equity']} for idx, r in data.iterrows() if pd.notna(r['Equity'])]
+    bt_dummy = [{"time": get_time(idx), "value": 10000} for idx, r in data.iterrows()]
+
+    charts.append({
+        "chart": {
+            **chart_layout, 
+            "height": 200,
+            "timeScale": { "visible": bt_is_bottom, "timeVisible": True, "secondsVisible": False }
+        },
+        "series": [
+            {"type": "Line", "data": bt_dummy, "options": {"color": "transparent", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
+            {
+                "type": "Baseline", 
+                "data": baseline_data, 
+                "options": {
+                    "baseValue": {"type": "price", "price": 10000}, # Anchors the chart at initial capital
+                    "topLineColor": c_theme["up"],
+                    "topFillColor1": c_theme["vol_up"],
+                    "topFillColor2": "rgba(0, 0, 0, 0)",
+                    "bottomLineColor": c_theme["down"],
+                    "bottomFillColor1": "rgba(0, 0, 0, 0)",
+                    "bottomFillColor2": c_theme["vol_down"],
+                    "lineWidth": 2,
+                }
+            }
         ]
     })
 
