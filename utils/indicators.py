@@ -4,31 +4,70 @@ import numpy as np
 from scipy.signal import argrelextrema
 
 # --- 1. Standard Indicators (Powered by pandas-ta) ---
-
 def apply_macd(df, fast=12, slow=26, signal=9):
-    """Calculates MACD using pandas-ta and standardizes column names."""
-    # append=True automatically adds the columns to your dataframe
-    df.ta.macd(fast=fast, slow=slow, signal=signal, append=True)
+    """
+    Calculates MACD using the exact math engine found in TradingView's PineScript.
+    Bypasses pandas-ta to prevent EMA initialization lagging.
+    """
+    df = df.copy()
+    close = df['Close']
     
-    # Rename the dynamic pandas-ta columns to match our UI expectations
-    df.rename(columns={
-        f"MACD_{fast}_{slow}_{signal}": "MACD",
-        f"MACDh_{fast}_{slow}_{signal}": "MACD_Hist",
-        f"MACDs_{fast}_{slow}_{signal}": "MACD_Signal"
-    }, inplace=True)
+    # 1. Calculate Fast and Slow EMAs using pandas ewm (adjust=False matches TV)
+    fast_ema = close.ewm(span=fast, min_periods=fast, adjust=False).mean()
+    slow_ema = close.ewm(span=slow, min_periods=slow, adjust=False).mean()
+    
+    # 2. Calculate MACD Line
+    df['MACD'] = fast_ema - slow_ema
+    
+    # 3. Calculate Signal Line (Wait for MACD to have data before calculating EMA)
+    df['MACD_Signal'] = df['MACD'].ewm(span=signal, min_periods=signal, adjust=False).mean()
+    
+    # 4. Calculate Histogram
+    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+    
     return df
 
-def apply_bollinger_bands(df, length=20, std=2):
-    """Calculates Bollinger Bands using pandas-ta."""
-    df.ta.bbands(length=length, std=std, append=True)
+def apply_corrected_qwma(df, length=15, correction_length=15, mult=2.0):
+    """
+    Translates Loxx's Corrected QWMA from PineScript to Pandas.
+    Creates a step-like moving average filtered by the standard deviation of change.
+    """
+    df = df.copy()
+    close = df['Close']
     
-    df.rename(columns={
-        f"BBL_{length}_{float(std)}": "BB_Lower",
-        f"BBM_{length}_{float(std)}": "BB_Mid",
-        f"BBU_{length}_{float(std)}": "BB_Upper"
-    }, inplace=True)
+    # 1. Quadratic Weighted Moving Average (QWMA)
+    # Weights increase quadratically (e.g., 1, 4, 9, 16...)
+    weights = np.arange(1, length + 1) ** 2
+    sum_weights = np.sum(weights)
+    qwma = close.rolling(window=length).apply(lambda x: np.sum(x * weights) / sum_weights, raw=True)
+    
+    # 2. Step-like Correction Engine
+    # Only allow the moving average to shift if the change is statistically significant
+    diff = close.diff()
+    std_change = diff.rolling(window=correction_length).std()
+    
+    corrected = np.full_like(qwma, np.nan)
+    qwma_arr = qwma.values
+    std_change_arr = std_change.values
+    
+    for i in range(length, len(qwma_arr)):
+        if np.isnan(corrected[i-1]):
+            corrected[i] = qwma_arr[i]
+        else:
+            if abs(qwma_arr[i] - corrected[i-1]) > std_change_arr[i]:
+                corrected[i] = qwma_arr[i]
+            else:
+                corrected[i] = corrected[i-1] # Hold the step
+                
+    df['QWMA_Mid'] = corrected
+    
+    # 3. Outer Levels (Bands)
+    std = close.rolling(window=length).std()
+    df['QWMA_Upper'] = df['QWMA_Mid'] + (std * mult)
+    df['QWMA_Lower'] = df['QWMA_Mid'] - (std * mult)
+    
     return df
-
+    
 # --- 2. Advanced / Custom Logic (Kept manual as they are not standard) ---
 
 def apply_rsi_divergence(df, rsi_period=14, lookback=20):
@@ -199,3 +238,4 @@ def apply_advanced_trendlines(df, window=5, pct_limit=5.0, breaks_limit=2, max_l
     top_lower = [coords for length, coords in valid_lower_lines[:max_lines]]
     
     return top_upper, top_lower
+
