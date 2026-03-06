@@ -9,7 +9,7 @@ from utils.indicators import (
     apply_td_sequential, 
     apply_rsi_divergence, 
     apply_macd, 
-    apply_corrected_qwma, # 🔥 SWAPPED: Bollinger Bands out, QWMA in
+    apply_corrected_qwma, 
     apply_advanced_trendlines
 )
 
@@ -28,7 +28,7 @@ with col3:
 with col4:
     overlays = st.multiselect(
         "PRICE OVERLAYS", 
-        options=["TD Sequential", "Auto Trendlines", "Corrected QWMA"], # 🔥 UI Updated
+        options=["TD Sequential", "Auto Trendlines", "Corrected QWMA"], 
         default=["TD Sequential", "Corrected QWMA"]
     )
 with col5:
@@ -51,7 +51,7 @@ if data is None or data.empty:
 
 # Apply selected mathematical models
 if "TD Sequential" in overlays: data = apply_td_sequential(data)
-if "Corrected QWMA" in overlays: data = apply_corrected_qwma(data) # 🔥 Logic Updated
+if "Corrected QWMA" in overlays: data = apply_corrected_qwma(data)
 if "RSI Divergence" in oscillators: data = apply_rsi_divergence(data)
 if "MACD" in oscillators: data = apply_macd(data)
 
@@ -81,11 +81,6 @@ themes = {
 }
 c_theme = themes[theme_sel]
 
-# --- 4. Dynamic Charting Engine (Lightweight Charts) ---
-
-# [Keep your themes and c_theme setup here...]
-
-# Remove timeScale from the global layout so we can assign it individually
 chart_layout = {
     "layout": { "textColor": c_theme["text"], "background": { "type": 'solid', "color": c_theme["bg"] } },
     "grid": { "vertLines": { "color": c_theme["grid"] }, "horzLines": { "color": c_theme["grid"] } },
@@ -99,22 +94,85 @@ chart_layout = {
 }
 
 # --- DYNAMIC AXIS LOGIC ---
-# Figure out which chart is at the very bottom so we only show the X-Axis once
 has_rsi = "RSI Divergence" in oscillators
 has_macd = "MACD" in oscillators
-
 price_is_bottom = not (has_rsi or has_macd)
 rsi_is_bottom = has_rsi and not has_macd
 
 # --- PANE 1: PRICE & OVERLAYS ---
-# [Keep your main_series, markers, volume, QWMA, and trendline logic here...]
+main_series = []
+candles = [{"time": get_time(idx), "open": r['Open'], "high": r['High'], "low": r['Low'], "close": r['Close']} for idx, r in data.iterrows()]
+
+markers = []
+if "TD Sequential" in overlays:
+    if 'Setup_Signal' in data.columns:
+        for idx, r in data[data['Setup_Signal'] == 1].iterrows():
+            markers.append({"time": get_time(idx), "position": "belowBar", "color": c_theme["up"], "shape": "arrowUp", "text": "9"})
+        for idx, r in data[data['Setup_Signal'] == -1].iterrows():
+            markers.append({"time": get_time(idx), "position": "aboveBar", "color": c_theme["down"], "shape": "arrowDown", "text": "9"})
+            
+    if 'Countdown_Signal' in data.columns:
+        for idx, r in data[data['Countdown_Signal'] == 1].iterrows():
+            markers.append({"time": get_time(idx), "position": "belowBar", "color": "#00AAFF", "shape": "arrowUp", "text": "13", "size": 2})
+        for idx, r in data[data['Countdown_Signal'] == -1].iterrows():
+            markers.append({"time": get_time(idx), "position": "aboveBar", "color": "#FFAA00", "shape": "arrowDown", "text": "13", "size": 2})
+
+main_series.append({
+    "type": "Candlestick",
+    "data": candles,
+    "options": {
+        "upColor": c_theme["up"], "downColor": c_theme["down"],
+        "borderVisible": False, "wickUpColor": c_theme["up"], "wickDownColor": c_theme["down"]
+    },
+    "markers": markers if markers else []
+})
+
+if "Volume" in data.columns:
+    vol_data = [{"time": get_time(idx), "value": r['Volume'], "color": c_theme["vol_up"] if r['Close'] >= r['Open'] else c_theme["vol_down"]} for idx, r in data.iterrows()]
+    main_series.append({
+        "type": "Histogram",
+        "data": vol_data,
+        "options": {
+            "priceFormat": {"type": 'volume'},
+            "priceScaleId": "", 
+            "scaleMargins": {"top": 0.85, "bottom": 0} 
+        }
+    })
+
+if "Corrected QWMA" in overlays and 'QWMA_Mid' in data.columns:
+    qwma_up = [{"time": get_time(idx), "value": r['QWMA_Upper']} for idx, r in data.iterrows() if pd.notna(r['QWMA_Upper'])]
+    qwma_low = [{"time": get_time(idx), "value": r['QWMA_Lower']} for idx, r in data.iterrows() if pd.notna(r['QWMA_Lower'])]
+    
+    qwma_mid = []
+    prev_val = None
+    for idx, r in data.iterrows():
+        val = r['QWMA_Mid']
+        if pd.notna(val):
+            if prev_val is not None:
+                color = c_theme["up"] if val > prev_val else (c_theme["down"] if val < prev_val else "#FFBB00")
+            else:
+                color = "#FFBB00"
+            qwma_mid.append({"time": get_time(idx), "value": val, "color": color})
+            prev_val = val
+
+    main_series.append({"type": "Line", "data": qwma_up, "options": {"color": c_theme["down"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": qwma_mid, "options": {"lineWidth": 2}})
+    main_series.append({"type": "Line", "data": qwma_low, "options": {"color": c_theme["up"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+
+if "Auto Trendlines" in overlays:
+    upper_lines, lower_lines = apply_advanced_trendlines(data, window=5, pct_limit=10.0, breaks_limit=2)
+    for line in upper_lines:
+        t1, t2 = get_time(line[0][0]), get_time(line[1][0])
+        main_series.append({"type": "Line", "data": [{"time": t1, "value": line[0][1]}, {"time": t2, "value": line[1][1]}], "options": {"color": c_theme["down"], "lineWidth": 1, "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}})
+    for line in lower_lines:
+        t1, t2 = get_time(line[0][0]), get_time(line[1][0])
+        main_series.append({"type": "Line", "data": [{"time": t1, "value": line[0][1]}, {"time": t2, "value": line[1][1]}], "options": {"color": c_theme["up"], "lineWidth": 1, "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}})
 
 # Register Main Chart
 charts.append({
     "chartOptions": {
         **chart_layout, 
-        "height": 600, # Enlarged Price Panel
-        # 🔥 Hides the X-axis unless this is the only chart on the screen
+        "height": 600, # 🔥 Enlarged Price Panel
         "timeScale": { "visible": price_is_bottom, "timeVisible": True, "secondsVisible": False } 
     },
     "series": main_series
@@ -133,7 +191,6 @@ if has_rsi and 'RSI' in data.columns:
         "chartOptions": {
             **chart_layout, 
             "height": 180,
-            # 🔥 Hides the X-axis unless MACD is turned off
             "timeScale": { "visible": rsi_is_bottom, "timeVisible": True, "secondsVisible": False }
         },
         "series": [{
@@ -156,14 +213,13 @@ if has_macd and 'MACD' in data.columns:
     macd_signal = [{"time": get_time(idx), "value": r['MACD_Signal']} for idx, r in data.iterrows() if pd.notna(r['MACD_Signal'])]
     macd_hist = [{"time": get_time(idx), "value": r['MACD_Hist'], "color": c_theme["up"] if r['MACD_Hist'] >= 0 else c_theme["down"]} for idx, r in data.iterrows() if pd.notna(r['MACD_Hist'])]
     
-    # The Dummy Line Trick to fix MACD time-axis misalignment 
+    # 🔥 The Dummy Line Trick to force MACD time-axis alignment 
     dummy_timeline = [{"time": get_time(idx), "value": 0} for idx, r in data.iterrows()]
 
     charts.append({
         "chartOptions": {
             **chart_layout, 
             "height": 180,
-            # 🔥 MACD is always at the bottom, so we force the X-Axis to be visible
             "timeScale": { "visible": True, "timeVisible": True, "secondsVisible": False }
         },
         "series": [
