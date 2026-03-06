@@ -27,45 +27,90 @@ def apply_macd(df, fast=12, slow=26, signal=9):
     
     return df
 
-def apply_corrected_qwma(df, length=15, correction_length=15, mult=2.0):
+def apply_corrected_qwma(df, ma_period=25, ma_speed=2, correction_period=0, fl_period=25, fl_up=90, fl_down=10):
     """
-    Translates Loxx's Corrected QWMA from PineScript to Pandas.
-    Creates a step-like moving average filtered by the standard deviation of change.
+    Translates Loxx's exact PineScript Corrected QWMA to Pandas.
+    Includes the Floating Levels and "Middle" color logic.
     """
     df = df.copy()
     close = df['Close']
-    
-    # 1. Quadratic Weighted Moving Average (QWMA)
-    # Weights increase quadratically (e.g., 1, 4, 9, 16...)
-    weights = np.arange(1, length + 1) ** 2
-    sum_weights = np.sum(weights)
-    qwma = close.rolling(window=length).apply(lambda x: np.sum(x * weights) / sum_weights, raw=True)
-    
-    # 2. Step-like Correction Engine
-    # Only allow the moving average to shift if the change is statistically significant
-    diff = close.diff()
-    std_change = diff.rolling(window=correction_length).std()
-    
-    corrected = np.full_like(qwma, np.nan)
-    qwma_arr = qwma.values
-    std_change_arr = std_change.values
-    
-    for i in range(length, len(qwma_arr)):
-        if np.isnan(corrected[i-1]):
-            corrected[i] = qwma_arr[i]
-        else:
-            if abs(qwma_arr[i] - corrected[i-1]) > std_change_arr[i]:
-                corrected[i] = qwma_arr[i]
+
+    # 1. Calculate uncorrected QWMA
+    # PineScript creates weights from oldest to newest: 1^speed, 2^speed ... (period-1)^speed, 2*(period^speed)
+    weights = np.array([i**ma_speed for i in range(1, ma_period)] + [2 * (ma_period**ma_speed)])
+    sum_weights = weights.sum()
+
+    def calc_qwma(x):
+        return np.sum(x * weights) / sum_weights
+
+    work = close.rolling(window=ma_period).apply(calc_qwma, raw=True)
+
+    # 2. Calculate Variance (v1)
+    dev_period = correction_period if correction_period > 0 else (0 if correction_period < 0 else ma_period)
+    if dev_period > 0:
+        # TradingView uses population std dev (ddof=0)
+        v1 = close.rolling(window=dev_period).std(ddof=0) ** 2
+    else:
+        v1 = pd.Series(0, index=df.index)
+
+    # 3. Corrected QWMA Iterative Calculation
+    qwma = np.full(len(close), np.nan)
+    v1_arr = v1.values
+    work_arr = work.values
+
+    first_valid = np.isnan(work_arr).argmin()
+    if first_valid < len(work_arr):
+        qwma[first_valid] = work_arr[first_valid]
+        for i in range(first_valid + 1, len(close)):
+            prev = qwma[i-1]
+            cur_work = work_arr[i]
+            cur_v1 = v1_arr[i]
+
+            if np.isnan(prev) or np.isnan(cur_work) or np.isnan(cur_v1):
+                qwma[i] = cur_work if not np.isnan(cur_work) else prev
+                continue
+
+            v2 = (prev - cur_work) ** 2
+            if v2 < cur_v1 or v2 == 0:
+                c = 0.0
             else:
-                corrected[i] = corrected[i-1] # Hold the step
-                
-    df['QWMA_Mid'] = corrected
-    
-    # 3. Outer Levels (Bands)
-    std = close.rolling(window=length).std()
-    df['QWMA_Upper'] = df['QWMA_Mid'] + (std * mult)
-    df['QWMA_Lower'] = df['QWMA_Mid'] - (std * mult)
-    
+                c = 1.0 - (cur_v1 / v2)
+
+            qwma[i] = prev + c * (cur_work - prev)
+
+    df['CQWMA'] = qwma
+
+    # 4. Floating Levels
+    qwma_s = df['CQWMA']
+    min_fl = qwma_s.rolling(window=fl_period).min()
+    max_fl = qwma_s.rolling(window=fl_period).max()
+    rng = max_fl - min_fl
+
+    df['CQWMA_Up'] = min_fl + (fl_up * rng / 100.0)
+    df['CQWMA_Down'] = min_fl + (fl_down * rng / 100.0)
+    df['CQWMA_Mid'] = (df['CQWMA_Up'] + df['CQWMA_Down']) * 0.5
+
+    # 5. Signal/Color Logic (Loxx's "Middle" mode logic)
+    # 1 = Green, 2 = Red, 0 = Gray
+    color_state = np.zeros(len(qwma))
+    fup_arr = df['CQWMA_Up'].values
+    fdn_arr = df['CQWMA_Down'].values
+
+    for i in range(1, len(qwma)):
+        if np.isnan(qwma[i]) or np.isnan(fup_arr[i]) or np.isnan(fdn_arr[i]):
+            continue
+
+        if qwma[i] > fup_arr[i]:
+            color_state[i] = 1
+        elif qwma[i] < fdn_arr[i]:
+            color_state[i] = 2
+        elif qwma[i] == qwma[i-1]:
+            color_state[i] = color_state[i-1]
+        else:
+            color_state[i] = 0
+
+    df['CQWMA_Color'] = color_state
+
     return df
     
 # --- 2. Advanced / Custom Logic (Kept manual as they are not standard) ---
@@ -238,4 +283,5 @@ def apply_advanced_trendlines(df, window=5, pct_limit=5.0, breaks_limit=2, max_l
     top_lower = [coords for length, coords in valid_lower_lines[:max_lines]]
     
     return top_upper, top_lower
+
 
