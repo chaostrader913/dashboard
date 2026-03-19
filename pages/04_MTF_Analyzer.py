@@ -20,26 +20,26 @@ except ImportError:
 st.set_page_config(layout="wide", page_title="MTF Fractal Sync")
 
 # Custom CSS for High-Contrast White Theme
-st.markdown("""
-<style>
-    .block-container { padding-top: 1.5rem; padding-bottom: 0rem; max-width: 98%; background-color: white; }
-    .info-box { 
-        background-color: #fcfcfc; 
-        padding: 1.2rem; 
-        border-radius: 10px; 
-        border: 1px solid #e0e0e0;
-        margin-bottom: 1rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .sync-card {
-        text-align: center;
-        padding: 10px;
-        border-radius: 6px;
-        background: #f8f9fa;
-        border: 1px solid #dee2e6;
-    }
-</style>
-""", unsafe_allow_html=True)
+# st.markdown("""
+# <style>
+#     .block-container { padding-top: 1.5rem; padding-bottom: 0rem; max-width: 98%; background-color: white; }
+#     .info-box { 
+#         background-color: #fcfcfc; 
+#         padding: 1.2rem; 
+#         border-radius: 10px; 
+#         border: 1px solid #e0e0e0;
+#         margin-bottom: 1rem;
+#         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+#     }
+#     .sync-card {
+#         text-align: center;
+#         padding: 10px;
+#         border-radius: 6px;
+#         background: #f8f9fa;
+#         border: 1px solid #dee2e6;
+#     }
+# </style>
+# """, unsafe_allow_html=True)
 
 # --- 2. Logic Engines ---
 
