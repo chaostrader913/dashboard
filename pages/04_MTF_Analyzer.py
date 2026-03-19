@@ -49,10 +49,10 @@ def get_signal_status(df):
     recent = df.tail(3)
     
     if 'Countdown_Signal' in recent.columns and recent['Countdown_Signal'].any():
-        val = recent['Countdown_Signal'].iloc[-1]
+        val = recent['Countdown_Signal'].replace(0, np.nan).ffill().iloc[-1]
         return "🔥 TD13 BUY" if val == 1 else "💀 TD13 SELL"
     if 'Setup_Signal' in recent.columns and recent['Setup_Signal'].any():
-        val = recent['Setup_Signal'].iloc[-1]
+        val = recent['Setup_Signal'].replace(0, np.nan).ffill().iloc[-1]
         return "🟢 TD9 BUY" if val == 1 else "🔴 TD9 SELL"
     if 'Signal' in recent.columns and recent['Signal'].any():
         return "🔵 RSI DIV"
@@ -76,6 +76,7 @@ def generate_trade_summary(score, sync_report):
     if score > 65: return "🚀 CONFLUENT UPTREND: Trend stacking detected. High continuation probability."
     if score < -65: return "⚠️ SYSTEMIC WEAKNESS: Heavy selling pressure. Avoid long entries."
     if macro_bull and score < 0: return "⚖️ MEAN REVERSION: Macro trend is Bullish. Current dip is a pullback."
+    if abs(score) < 15: return "🌀 COMPRESSION: Market is in a fractal squeeze. Wait for 4H/Daily direction."
     return "🔎 MONITORING: Mixed alignment. Watch the 1H Anchor for direction."
 
 # --- 3. Configuration ---
@@ -170,17 +171,21 @@ if ticker:
             with cols[i]:
                 if data is not None:
                     apds = []
+                    # Overlay logic only for Candlestick (PnF/Renko calculate their own scales)
                     if selected_type == 'candle':
-                        # QWMA
+                        # QWMA logic with all-nan guards
                         if show_qwma and 'CQWMA' in data.columns:
                             qwma_g = np.where(data['CQWMA_Color'] == 1, data['CQWMA'], np.nan)
                             qwma_r = np.where(data['CQWMA_Color'] == 2, data['CQWMA'], np.nan)
-                            apds.append(mpf.make_addplot(qwma_g, color='#008a5d', width=1.8))
-                            apds.append(mpf.make_addplot(qwma_r, color='#c92a2a', width=1.8))
-                            apds.append(mpf.make_addplot(data['CQWMA_Up'], color='#008a5d', width=0.7, linestyle='dashed', alpha=0.2))
-                            apds.append(mpf.make_addplot(data['CQWMA_Down'], color='#c92a2a', width=0.7, linestyle='dashed', alpha=0.2))
+                            if not np.all(np.isnan(qwma_g)): apds.append(mpf.make_addplot(qwma_g, color='#008a5d', width=1.8))
+                            if not np.all(np.isnan(qwma_r)): apds.append(mpf.make_addplot(qwma_r, color='#c92a2a', width=1.8))
+                            
+                            up_fl = data['CQWMA_Up'].values
+                            dn_fl = data['CQWMA_Down'].values
+                            if not np.all(np.isnan(up_fl)): apds.append(mpf.make_addplot(up_fl, color='#008a5d', width=0.7, linestyle='dashed', alpha=0.2))
+                            if not np.all(np.isnan(dn_fl)): apds.append(mpf.make_addplot(dn_fl, color='#c92a2a', width=0.7, linestyle='dashed', alpha=0.2))
 
-                        # TD Signals
+                        # TD Signals logic with all-nan guards
                         if 'Setup_Signal' in data.columns:
                             b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.985, np.nan)
                             s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.015, np.nan)
@@ -193,32 +198,39 @@ if ticker:
                             if not np.all(np.isnan(b13)): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#1c7ed6', markersize=70))
                             if not np.all(np.isnan(s13)): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#fd7e14', markersize=70))
 
-                    # S/R Calc
-                    res = data['High'].iloc[:-1].rolling(20).max().iloc[-1]
-                    sup = data['Low'].iloc[:-1].rolling(20).min().iloc[-1]
+                    # S/R Calc (ensure rolling window has enough data)
+                    try:
+                        res = data['High'].iloc[:-1].rolling(20, min_periods=1).max().iloc[-1]
+                        sup = data['Low'].iloc[:-1].rolling(20, min_periods=1).min().iloc[-1]
+                    except:
+                        res, sup = data['High'].max(), data['Low'].min()
                     curr = data['Close'].iloc[-1]
 
-                    fig, axlist = mpf.plot(
-                        data, type=selected_type, style='mike', volume=show_vol and label not in ['W', 'M'],
-                        addplot=apds if apds else None, returnfig=True, figsize=(8, 5.5),
-                        tight_layout=True, axisoff=True,
-                        hlines=dict(hlines=[curr, res, sup], colors=['#adb5bd', '#c92a2a', '#008a5d'], linestyle=['dotted', 'dashed', 'dashed'], linewidths=[1, 0.8, 0.8], alpha=0.5),
-                        scale_padding=dict(left=0.1, right=0.1, top=1.2, bottom=1.2)
-                    )
-                    
-                    # Watermark & Padding
-                    xmin, xmax = axlist[0].get_xlim()
-                    axlist[0].set_xlim(xmin, xmax + 6)
-                    axlist[0].text(0.5, 0.5, label, transform=axlist[0].transAxes, fontsize=80, fontweight='black', color='#dee2e6', alpha=0.15, ha='center', va='center', zorder=0)
-                    
-                    if "BUY" in status or "SELL" in status:
-                        rect_color = "#008a5d" if "BUY" in status else "#c92a2a"
-                        fig.patch.set_linewidth(6)
-                        fig.patch.set_edgecolor(rect_color)
+                    # Base Plotting
+                    try:
+                        fig, axlist = mpf.plot(
+                            data, type=selected_type, style='mike', volume=show_vol and label not in ['W', 'M'],
+                            addplot=apds if apds else None, returnfig=True, figsize=(8, 5.5),
+                            tight_layout=True, axisoff=True,
+                            hlines=dict(hlines=[curr, res, sup], colors=['#adb5bd', '#c92a2a', '#008a5d'], linestyle=['dotted', 'dashed', 'dashed'], linewidths=[1, 0.8, 0.8], alpha=0.5),
+                            scale_padding=dict(left=0.1, right=0.1, top=1.2, bottom=1.2)
+                        )
+                        
+                        # Watermark & Padding
+                        xmin, xmax = axlist[0].get_xlim()
+                        axlist[0].set_xlim(xmin, xmax + 6)
+                        axlist[0].text(0.5, 0.5, label, transform=axlist[0].transAxes, fontsize=80, fontweight='black', color='#dee2e6', alpha=0.15, ha='center', va='center', zorder=0)
+                        
+                        if "BUY" in status or "SELL" in status:
+                            rect_color = "#008a5d" if "BUY" in status else "#c92a2a"
+                            fig.patch.set_linewidth(6)
+                            fig.patch.set_edgecolor(rect_color)
 
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=130, facecolor='white', bbox_inches='tight', pad_inches=0)
-                    st.image(buf, use_container_width=True)
-                    plt.close(fig)
+                        buf = io.BytesIO()
+                        fig.savefig(buf, format="png", dpi=130, facecolor='white', bbox_inches='tight', pad_inches=0)
+                        st.image(buf, use_container_width=True)
+                        plt.close(fig)
+                    except Exception as plot_err:
+                        st.error(f"Render Error {label}: {plot_err}")
                 else:
                     st.error(f"{label} Offline")
