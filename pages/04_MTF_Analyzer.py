@@ -3,282 +3,259 @@ import pandas as pd
 import numpy as np
 import mplfinance as mpf
 import io
-from streamlit_autorefresh import st_autorefresh
 import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg') # Essential for web-server stability
 
-try:
-    from utils.data_loader import fetch_data
-    from utils.indicators import apply_td_sequential, apply_rsi_divergence
-except ImportError:
-    st.error("Missing utility files. Ensure 'utils/data_loader.py' and 'utils/indicators.py' exist.")
-    st.stop()
+# --- IMPORT GLOBALS ---
+from utils.data_loader import fetch_data
+from utils.indicators import apply_td_sequential, apply_rsi_divergence, apply_corrected_qwma
 
 # --- 1. Page Configuration ---
-st.set_page_config(layout="wide", page_title="Multi-Timeframe Analyzer")
+st.set_page_config(layout="wide", page_title="MTF Fractal Sync")
 
-# st.markdown("""
-# <style>
-#     .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
+# Custom CSS for High-Contrast White Theme
+st.markdown("""
+<style>
+    .block-container { padding-top: 1.5rem; padding-bottom: 0rem; max-width: 98%; background-color: white; }
     
-#     /* 1. Remove horizontal space between columns */
-#     div[data-testid="stHorizontalBlock"] { gap: 0.10rem !important; }
+    /* Info boxes for white background */
+    .info-box { 
+        background-color: #fcfcfc; 
+        padding: 1.2rem; 
+        border-radius: 10px; 
+        border: 1px solid #e0e0e0;
+        margin-bottom: 1rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
     
-#     /* 2. Remove padding inside the columns */
-#     div[data-testid="column"] { padding: 0.1rem !important; }
+    /* Sync Strip cards */
+    .sync-card {
+        text-align: center;
+        padding: 10px;
+        border-radius: 6px;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+    }
     
-#     /* 3. Pull the rows closer together vertically */
-#     div[data-testid="stImage"] { margin-bottom: -1.2rem !important; }
-# </style>
-# """, unsafe_allow_html=True)
+    /* Sharp Header Labels */
+    .chart-header {
+        font-size: 1.4rem;
+        font-weight: 900;
+        color: #343a40;
+        margin-bottom: -5px;
+        margin-left: 10px;
+        letter-spacing: -0.5px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# --- 2. Logic Engines ---
+# --- 2. Core Logic Engines ---
 
 def get_signal_status(df):
+    """Detects the most recent active signal in a dataframe."""
     if df is None or df.empty: return "⚪ OFFLINE"
     recent = df.tail(3)
     
-    if 'Countdown_Signal' in recent.columns:
-        last_val = recent['Countdown_Signal'].replace(0, np.nan).ffill().iloc[-1]
-        if last_val == 1: return "🔥 TD13 BUY"
-        if last_val == -1: return "💀 TD13 SELL"
-
-    if 'Setup_Signal' in recent.columns:
-        last_val = recent['Setup_Signal'].replace(0, np.nan).ffill().iloc[-1]
-        if last_val == 1: return "🟢 TD9 BUY"
-        if last_val == -1: return "🔴 TD9 SELL"
-        
+    if 'Countdown_Signal' in recent.columns and recent['Countdown_Signal'].any():
+        val = recent['Countdown_Signal'].iloc[-1]
+        return "🔥 TD13 BUY" if val == 1 else "💀 TD13 SELL"
+    if 'Setup_Signal' in recent.columns and recent['Setup_Signal'].any():
+        val = recent['Setup_Signal'].iloc[-1]
+        return "🟢 TD9 BUY" if val == 1 else "🔴 TD9 SELL"
     if 'Signal' in recent.columns and recent['Signal'].any():
         return "🔵 RSI DIV"
-        
     return "⚪ NEUTRAL"
 
 def calculate_confluence(sync_report):
-    weights = { "30M": 1, "1H": 2, "4H": 5, "D": 10, "W": 20, "M": 30 }
+    """Calculates weighted sentiment score (0-100%)."""
+    weights = {"30M": 5, "1H": 15, "4H": 25, "D": 40, "W": 60, "M": 80}
     total_score = 0
-    max_active_weight = 0
+    max_possible = sum(weights.values())
     
-    for label, (_, status) in sync_report.items():
-        w = weights.get(label, 5)
-        max_active_weight += w
+    for label, (df, status) in sync_report.items():
+        if df is None: continue
+        w = weights.get(label, 10)
         if "BUY" in status: total_score += w
         elif "SELL" in status: total_score -= w
             
-    if max_active_weight == 0: return 0
-    return np.clip((total_score / max_active_weight) * 100, -100, 100)
+    return np.clip((total_score / max_possible) * 100, -100, 100)
 
 def generate_trade_summary(score, sync_report):
     macro_signals = [s for l, (_, s) in sync_report.items() if l in ["D", "W", "M"]]
-    micro_signals = [s for l, (_, s) in sync_report.items() if l in ["30M", "1H", "4H"]]
-    
     macro_bull = any("BUY" in s for s in macro_signals)
-    macro_bear = any("SELL" in s for s in macro_signals)
-    micro_bull = any("BUY" in s for s in micro_signals)
-    micro_bear = any("SELL" in s for s in micro_signals)
     
     if score > 65: return "🚀 CONFLUENT UPTREND: Trend stacking detected. High probability of continuation."
-    if score < -65: return "⚠️ SYSTEMIC WEAKNESS: Selling pressure across all resolutions. Avoid longs."
-    if macro_bull and micro_bear: return "⚖️ MEAN REVERSION: Macro trend is Bullish, but Micro is overextended. Buy the dip."
-    if macro_bear and micro_bull: return "🩸 DEAD CAT BOUNCE: Macro trend is Bearish. Short-term strength is likely a trap."
-    if abs(score) < 15: return "🌀 COMPRESSION: Market is in a fractal squeeze. Wait for 4H/Daily direction."
-    return "🔎 MONITORING: Mixed alignment. Look for the 1H/4H 'Anchor' to flip direction."
+    if score < -65: return "⚠️ SYSTEMIC WEAKNESS: Heavy selling pressure. Avoid long entries."
+    if macro_bull and score < 0: return "⚖️ MEAN REVERSION: Macro trend is Bullish. Current micro weakness is a pullback."
+    if abs(score) < 15: return "🌀 COMPRESSION: Market is in a squeeze. Look for the 1H/4H breakout."
+    return "🔎 MONITORING: Mixed alignment. Watch the 1H 'Anchor' for trend confirmation."
 
-# --- 3. Configuration ---
+# --- 3. Configuration (3x3 Core Grid) ---
 TIMEFRAMES = [
     {"interval": "30m", "period": "5d",   "label": "30M"},
-    {"interval": "1h",  "period": "1mo",  "label": "1H"},
-    {"interval": "4h",  "period": "3mo",  "label": "4H"},
-    {"interval": "1d",  "period": "1y",   "label": "D"},
-    {"interval": "1wk", "period": "3y",   "label": "W"},
-    {"interval": "1mo", "period": "5y",   "label": "M"},
+    {"interval": "60m", "period": "1wk",  "label": "1H"},
+    {"interval": "1h",  "period": "1mo",  "label": "4H"}, 
+    {"interval": "1d",  "period": "6mo",  "label": "D"},
+    {"interval": "1wk", "period": "2y",   "label": "W"}, 
+    {"interval": "1mo", "period": "5y",   "label": "M"}, 
 ]
 
 # --- 4. Sidebar ---
 with st.sidebar:
     st.header("🔎 ASSET SYNC")
-    ticker = st.text_input("SYMBOL", value="BTC-USD").upper()
-    
-    # Chart Type Selector
-    chart_sel = st.selectbox("CHART TYPE", ['Candlestick', 'Point & Figure', 'Renko'], index=0)
-    
-    # Theme Selector (Index 2 sets 'mike' as the default)
-    style_sel = st.selectbox("THEME", ['nightclouds', 'yahoo', 'mike', 'blueskies'], index=2)
-    
+    ticker = st.text_input("SYMBOL", value="NVDA").upper()
     st.divider()
     show_vol = st.checkbox("Show Volume", value=False)
-    # Auto-Refresh Toggle
-    st.subheader("⏱️ Live Sync")
-    auto_refresh = st.checkbox("Enable Auto-Refresh", value=False)
-    refresh_rate = st.slider("Refresh Interval (Seconds)", min_value=30, max_value=300, value=60, step=30)
-    
-    if auto_refresh:
-        # interval takes milliseconds, so we multiply the seconds by 1000
-        st_autorefresh(interval=refresh_rate * 1000, limit=None, key="mtf_refresh")
-        st.caption(f"🟢 Polling API every {refresh_rate}s")
-    else:
-        st.caption("🔴 Live Sync Paused")
+    show_qwma = st.checkbox("Corrected QWMA Overlay", value=True)
+    st.caption("Theme: Mike (Optimized for Legibility)")
 
-# Map UI selection to mplfinance kwargs
-chart_type_map = {'Candlestick': 'candle', 'Point & Figure': 'pnf', 'Renko': 'renko'}
-selected_type = chart_type_map[chart_sel]
-
-# --- 5. Main Content ---
+# --- 5. Main Content Execution ---
 if ticker:
-    st.markdown(f"### 🧭 {ticker} Fractal Sync")
+    st.subheader(f"🧭 MTF FRACTAL SYNC: {ticker}")
     
     sync_report = {}
-    with st.spinner("Crunching data..."):
+    with st.spinner(f"Synchronizing {ticker}..."):
         for tf in TIMEFRAMES:
-            data = fetch_data(ticker, tf['interval'], tf['period'])
-            if data is not None and not data.empty:
-                df = data.copy()
-                df = apply_td_sequential(df)
-                df = apply_rsi_divergence(df)
-                sync_report[tf['label']] = (df, get_signal_status(df))
+            raw_data = fetch_data(ticker, tf['interval'], tf['period'])
+            
+            if raw_data is not None and not raw_data.empty:
+                data = raw_data.copy()
+                
+                # MultiIndex/MultiTicker Sanitization
+                if isinstance(data.columns, pd.MultiIndex):
+                    try: data = data.xs(ticker, axis=1, level=1)
+                    except: data.columns = data.columns.get_level_values(0)
+                
+                # Aggressive sanitization to fix 'Render Error D'
+                data.index = pd.to_datetime(data.index).tz_localize(None)
+                if tf['interval'] in ['1d', '1wk', '1mo']:
+                    data.index = data.index.normalize() # Align to midnight
+                
+                # Ensure monotonic index and drop duplicates
+                data = data[~data.index.duplicated(keep='last')].sort_index()
+                
+                # Data Type Enforcement
+                for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                    if col in data.columns:
+                        data[col] = pd.to_numeric(data[col].squeeze(), errors='coerce')
+                
+                data = data.dropna(subset=['Close'])
+                
+                if len(data) > 10:
+                    data = apply_td_sequential(data)
+                    data = apply_rsi_divergence(data)
+                    if show_qwma:
+                        data = apply_corrected_qwma(data)
+                    sync_report[tf['label']] = (data, get_signal_status(data))
+                else:
+                    sync_report[tf['label']] = (None, "⚪ DATA SHORT")
             else:
                 sync_report[tf['label']] = (None, "⚪ OFFLINE")
 
-    # Heatmap Strip
+    # --- TOP SYNC STRIP ---
     h_cols = st.columns(len(TIMEFRAMES))
     for i, (label, (df, status)) in enumerate(sync_report.items()):
-        color = "#888888"
-        if "BUY" in status: color = "#00FFAA"
-        elif "SELL" in status: color = "#FF4B4B"
-        elif "DIV" in status: color = "#00AAFF"
+        color = "#495057" 
+        if "BUY" in status: color = "#008a5d" # Deep Emerald
+        elif "SELL" in status: color = "#c92a2a" # Sharp Crimson
+        elif "DIV" in status: color = "#1c7ed6" # Cobalt
+        
         with h_cols[i]:
-            st.markdown(
-                f"<div style='text-align:center;'>"
-                f"<span style='font-size:16px; font-weight:bold;'>{label}</span><br>"
-                f"<span style='color:{color}; font-size:14px; font-weight:bold;'>{status.split()[-1]}</span>"
-                f"</div>", 
-                unsafe_allow_html=True
-            )
+            st.markdown(f"""
+            <div class="sync-card">
+                <div style="font-weight:900; font-size:13px; color:#212529;">{label}</div>
+                <div style="color:{color}; font-size:11px; font-weight:800;">{status}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-    st.divider()
+    st.write("")
 
-    # Sentiment Score
+    # --- SCOREBOARD ---
     score = calculate_confluence(sync_report)
     summary = generate_trade_summary(score, sync_report)
+    gauge_color = "#008a5d" if score > 20 else "#c92a2a" if score < -20 else "#495057"
     
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        st.metric("CONFLUENCE", f"{score:+.1f}%", delta_color="normal")
-    with c2:
-        st.info(summary)
+    m_left, m_right = st.columns([1, 2])
+    with m_left:
+        st.markdown(f"""
+        <div class="info-box" style="border-left: 6px solid {gauge_color};">
+            <div style="font-size: 0.85rem; font-weight: 700; color: #adb5bd;">MACRO CONFLUENCE</div>
+            <div style="font-family:monospace; font-size: 2.2rem; font-weight:900; color:{gauge_color};">{score:+.1f}%</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with m_right:
+        st.markdown(f"""
+        <div class="info-box">
+            <div style="font-size: 0.85rem; font-weight: 700; color: #adb5bd; margin-bottom: 4px;">STRATEGY ADVISOR</div>
+            <div style="font-weight: 600; color: #212529;">{summary}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # --- 6. The Grid ---
-    rows = [TIMEFRAMES[i:i+3] for i in range(0, len(TIMEFRAMES), 3)]
-    for row_tfs in rows:
-        cols = st.columns(3)
-        for i, tf_info in enumerate(row_tfs):
-            label = tf_info['label']
-            data, status = sync_report[label]
-            
-            with cols[i]:
-                if data is not None:
-                    apds = []                    
-                    # SAFETY CHECK: Only plot overlays on Time-Based Candlestick charts
-                    if selected_type == 'candle':
+    # --- 6. THE GRID (2x3 Layout) ---
+    cols_per_row = 3
+    num_rows = 2
+
+    for r in range(num_rows):
+        grid_cols = st.columns(cols_per_row)
+        for c in range(cols_per_row):
+            idx = r * cols_per_row + c
+            if idx < len(TIMEFRAMES):
+                tf_label = TIMEFRAMES[idx]['label']
+                data, status = sync_report[tf_label]
+                
+                with grid_cols[c]:
+                    st.markdown(f'<div class="chart-header">{tf_label}</div>', unsafe_allow_html=True)
+                    
+                    if data is not None and len(data) > 5:
+                        apds = []
                         
-                        # 1. TD Setup (9) - Closest to the candle
+                        # --- QWMA Plotting ---
+                        if show_qwma and 'CQWMA' in data.columns:
+                            # Split QWMA by color state for distinct coloring in mpf
+                            qwma_g = np.where(data['CQWMA_Color'] == 1, data['CQWMA'], np.nan)
+                            qwma_r = np.where(data['CQWMA_Color'] == 2, data['CQWMA'], np.nan)
+                            qwma_n = np.where(data['CQWMA_Color'] == 0, data['CQWMA'], np.nan)
+                            
+                            # Trendline
+                            apds.append(mpf.make_addplot(qwma_g, color='#008a5d', width=2.0))
+                            apds.append(mpf.make_addplot(qwma_r, color='#c92a2a', width=2.0))
+                            apds.append(mpf.make_addplot(qwma_n, color='#888888', width=1.5, linestyle='dotted'))
+                            
+                            # Floating Levels (Upper/Down)
+                            apds.append(mpf.make_addplot(data['CQWMA_Up'], color='#008a5d', width=0.8, linestyle='dashed', alpha=0.3))
+                            apds.append(mpf.make_addplot(data['CQWMA_Down'], color='#c92a2a', width=0.8, linestyle='dashed', alpha=0.3))
+
+                        # --- TD Signals ---
                         if 'Setup_Signal' in data.columns:
-                            b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.99, np.nan)
-                            s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.01, np.nan)
-                            if not np.all(np.isnan(b9)): apds.append(mpf.make_addplot(b9, type='scatter', marker='^', color='#00FFAA', markersize=30))
-                            if not np.all(np.isnan(s9)): apds.append(mpf.make_addplot(s9, type='scatter', marker='v', color='#FF4B4B', markersize=30))
+                            b9, s9 = np.full(len(data), np.nan), np.full(len(data), np.nan)
+                            b_mask, s_mask = (data['Setup_Signal'] == 1).values, (data['Setup_Signal'] == -1).values
+                            b9[b_mask], s9[s_mask] = data['Low'].values[b_mask] * 0.985, data['High'].values[s_mask] * 1.015
+                            if not np.all(np.isnan(b9)): apds.append(mpf.make_addplot(b9, type='scatter', marker=r'$9$', color='#008a5d', markersize=65))
+                            if not np.all(np.isnan(s9)): apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#c92a2a', markersize=65))
+                        
+                        try:
+                            v_on = show_vol if 'Volume' in data.columns and not data['Volume'].isna().all() else False
+                            
+                            # Use fixed 'mike' style with tight layout and white background
+                            fig, axlist = mpf.plot(
+                                data, type='candle', style='mike', volume=v_on,
+                                returnfig=True, figsize=(8, 5.5), tight_layout=True,
+                                addplot=apds if apds else None, xrotation=0, axisoff=True,
+                                scale_padding=dict(left=0.2, right=0.2, top=1.3, bottom=1.3)
+                            )
+                            
+                            # Signal Border - Robust Thick Framing
+                            if "BUY" in status or "SELL" in status:
+                                b_color = "#008a5d" if "BUY" in status else "#c92a2a"
+                                rect = plt.Rectangle((0,0), 1, 1, fill=False, color=b_color, lw=7, transform=fig.transFigure)
+                                fig.patches.append(rect)
 
-                        # 2. TD Countdown (13) - Pushed slightly further out
-                        if 'Countdown_Signal' in data.columns:
-                            b13 = np.where(data['Countdown_Signal'] == 1, data['Low'] * 0.975, np.nan)
-                            s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.025, np.nan)
-                            if not np.all(np.isnan(b13)): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#00AAFF', markersize=80))
-                            if not np.all(np.isnan(s13)): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#FFAA00', markersize=80))
-
-                        # 3. RSI Divergence - Pushed furthest out, marked with a Star
-                        if 'Signal' in data.columns:
-                            div_bull = np.where(data['Signal'] == 1, data['Low'] * 0.96, np.nan)
-                            if not np.all(np.isnan(div_bull)): apds.append(mpf.make_addplot(div_bull, type='scatter', marker='*', color='#00FFAA', markersize=60))
-
-                    # Combine args
-                    plot_kwargs = {
-                        "type": selected_type, 
-                        "style": style_sel, 
-                        "volume": show_vol,
-                        "figsize": (5, 3.5),
-                        "tight_layout": True, 
-                        "returnfig": True,
-                        "xrotation": 45
-                        #"axisoff": True
-                    }
-                    if apds: plot_kwargs["addplot"] = apds
-
-                    # --- DYNAMIC SUPPORT & RESISTANCE ---
-                    # Calculate the highest high and lowest low of the last 20 closed candles
-                    recent_closed = data[:-1] # Exclude the current, unfinished candle
-                    resistance = recent_closed['High'].rolling(window=20).max().iloc[-1]
-                    support = recent_closed['Low'].rolling(window=20).min().iloc[-1]
-                    current_price = data['Close'].iloc[-1]
-
-                    # Generate the Chart with the price, support, and resistance lines
-                    fig, axlist = mpf.plot(
-                        data, 
-                        **plot_kwargs,
-                        hlines=dict(
-                            hlines=[current_price, resistance, support], 
-                            colors=['#888888', '#FF4B4B', '#00FFAA'], # Gray (Price), Red (Res), Green (Sup)
-                            linestyle=['dotted', 'dashed', 'dashed'], 
-                            linewidths=[1.5, 1, 1], 
-                            alpha=0.7
-                        )
-                    )
-                    for ax in axlist:
-                        ax.grid(False)
-
-                    # 1. Strip the default margins to make the left side perfectly flush
-                    axlist[0].margins(x=0) 
-                    
-                    # 🔥 2. ADD RIGHT-SIDE PADDING (FORWARD SPACE)
-                    # Grab the current X-axis limits
-                    xmin, xmax = axlist[0].get_xlim()
-                    # Push the right edge out by 8 "bars" of empty space
-                    axlist[0].set_xlim(xmin, xmax + 8)
-                    
-                    # Custom inner title block
-                    # 🔥 THE WATERMARK
-                    axlist[0].text(
-                        0.5, 0.5, label,                  # X=0.5, Y=0.5 is the exact center
-                        transform=axlist[0].transAxes,    # Use relative axis coordinates
-                        fontsize=70,                      # Massive font size
-                        fontweight='bold',
-                        color='white',
-                        alpha=0.20,                       # Make it 94% transparent
-                        ha='center',                      # Horizontally center the text
-                        va='center',                      # Vertically center the text
-                        zorder=0                          # CRITICAL: Pushes the text behind the candles
-                    )
-                    
-                    # Highlight Active signals with a border
-                    if "BUY" in status or "SELL" in status:
-                        rect_color = "#00FFAA" if "BUY" in status else "#FF4B4B"
-                        fig.patch.set_linewidth(4)
-                        fig.patch.set_edgecolor(rect_color)
-
-                    # Aggressively crop invisible chart margins
-                    buf = io.BytesIO()
-                    fig.savefig(
-                        buf, 
-                        format="png", 
-                        dpi=100, 
-                        facecolor=fig.get_facecolor(), 
-                        bbox_inches='tight', 
-                        pad_inches=0
-                    )
-                    st.image(buf, use_container_width=True)
-                    plt.close(fig)
-                    
-                else:
-                    st.warning(f"{label} No Data")
-
+                            buf = io.BytesIO()
+                            fig.savefig(buf, format="png", dpi=140, bbox_inches='tight', facecolor='white')
+                            st.image(buf, use_container_width=True)
+                            plt.close(fig)
+                        except Exception as e:
+                            st.error(f"Render Error {tf_label}")
+                    else:
+                        st.error(f"OFFLINE: {tf_label}")
 else:
-    st.info("👈 Enter a ticker symbol in the sidebar.")
+    st.info("👈 Enter a ticker symbol in the sidebar to begin analysis.")
