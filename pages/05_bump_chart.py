@@ -120,8 +120,8 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
         return fig
 
-def plot_bump_chart(tickers_dict, group_name, interval, period, custom_days, style):
-    """Generates a Bump Chart using the custom fetch_data loader"""
+def plot_bump_chart(tickers_dict, group_name, interval, period, custom_days, style, rolling_window):
+    """Generates a Bump Chart using rolling returns"""
     all_close_data = {}
     
     with st.spinner(f"Fetching data for {group_name} Bump Chart..."):
@@ -140,32 +140,41 @@ def plot_bump_chart(tickers_dict, group_name, interval, period, custom_days, sty
         # 2. Combine into a single DataFrame
         combined_df = pd.DataFrame(all_close_data)
         
-        # 3. Resample to reduce noise (Bump charts get too messy with daily data over long periods)
+        # 3. Resample to reduce noise (Monthly for >=1yr, Weekly for shorter)
         try:
             if period in ['1y', '2y', '5y', '10y']:
                 resampled = combined_df.resample('ME').last() # Monthly
                 x_format = '%b %Y'
+                period_type = 'Month'
             else:
                 resampled = combined_df.resample('W').last() # Weekly for shorter periods
                 x_format = '%b %d'
+                period_type = 'Week'
         except ValueError:
              # Fallback for older pandas versions
             if period in ['1y', '2y', '5y', '10y']:
                 resampled = combined_df.resample('M').last() 
                 x_format = '%b %Y'
+                period_type = 'Month'
             else:
                 resampled = combined_df.resample('W').last() 
                 x_format = '%b %d'
+                period_type = 'Week'
 
         resampled = resampled.dropna(how='all').ffill().bfill()
         
-        if len(resampled) < 2:
-            st.warning("Not enough data points for a meaningful bump chart. Try a longer period.")
+        # 4. Calculate Rolling Return and Rank
+        # Instead of cum_return, we use pct_change over the selected rolling window
+        rolling_return = resampled.pct_change(periods=rolling_window)
+        
+        # Drop the initial rows that are NaN due to the rolling window calculation
+        rolling_return = rolling_return.dropna(how='all')
+        
+        if len(rolling_return) < 2:
+            st.warning(f"Not enough data points after applying a {rolling_window}-period rolling window. Try a longer timeframe or a shorter lookback.")
             return
 
-        # 4. Calculate Cumulative Return and Rank
-        cum_return = (resampled / resampled.iloc[0]) - 1
-        ranks = cum_return.rank(axis=1, ascending=False, method='min')
+        ranks = rolling_return.rank(axis=1, ascending=False, method='min')
         
         # 5. Plotting Setup
         fig, ax = plt.subplots(figsize=(10, 5))
@@ -204,7 +213,9 @@ def plot_bump_chart(tickers_dict, group_name, interval, period, custom_days, sty
         ax.set_xticklabels([d.strftime(x_format) for d in ranks.index], rotation=45, color=text_color)
         ax.tick_params(axis='y', colors=text_color)
         
-        ax.set_title(f"🏆 {group_name} - Relative Performance Rank (Cumulative)", pad=20, fontweight='bold', fontsize=12, color=text_color)
+        # Dynamic title reflecting the period type (Week vs Month)
+        title_str = f"🏆 {group_name} - Relative Performance Rank ({rolling_window}-{period_type} Rolling)"
+        ax.set_title(title_str, pad=20, fontweight='bold', fontsize=12, color=text_color)
         
         # Grid and Spines styling
         ax.grid(axis='y', linestyle='--', alpha=0.3, color=text_color)
@@ -237,6 +248,11 @@ with st.sidebar:
     
     tdsq_check = st.checkbox('TDSQ (9 & 13)', value=True)
     rsi_check = st.checkbox('RSI DIVERGENCE', value=True)
+
+    st.divider()
+    st.markdown("#### BUMP CHART")
+    rolling_bars = st.slider('ROLLING LOOKBACK (BARS)', min_value=1, max_value=12, value=3, 
+                             help="Number of resampled periods (months or weeks depending on the selected timeframe) to calculate the rolling performance rank.")
     
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
@@ -255,7 +271,8 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                 interval=interval_sel, 
                 period=period_sel, 
                 custom_days=day_slider if is_custom else None, 
-                style=style_sel
+                style=style_sel,
+                rolling_window=rolling_bars
             )
             
         st.divider()
