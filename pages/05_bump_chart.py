@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import mplfinance as mpf
+import plotly.express as px
 import warnings
 
 # --- IMPORT GLOBALS ---
@@ -61,7 +62,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         kwargs = dict(
             type=mpf_type, style=current_style, show_nontrading=False, returnfig=True,
             title=f"{name} ({ticker})", figsize=(5, 3.2), 
-            tight_layout=False # We handle the layout manually below to protect the title
+            tight_layout=False 
         )
         
         if show_sma and mpf_type not in ['renko', 'pnf']: kwargs['mav'] = (20,)
@@ -72,7 +73,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         # --- SIGNAL OVERLAYS ---
         apds = []
         if mpf_type not in ['renko', 'pnf']:
-            # 1. TDSQ Signals (Green for 9, Red for 13)
+            # 1. TDSQ Signals
             if show_tdsq and 'Setup_Signal' in data.columns:
                 b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
                 s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
@@ -81,7 +82,6 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 
                 if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
                 if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
-                
                 if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
                 if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
 
@@ -95,8 +95,6 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         fig, axlist = mpf.plot(data, **kwargs)
         
         if style == 'nightclouds': fig.patch.set_facecolor('#0E1117')
-        
-        # Protect the title and right-side axis labels
         fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
         return fig
         
@@ -120,16 +118,16 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
         return fig
 
-def plot_bump_chart(tickers_dict, group_name, interval, period, custom_days, style, rolling_window):
-    """Generates a Bump Chart using rolling returns"""
+def plot_bump_chart_plotly(tickers_dict, group_name, period_sel, style, lookback_months):
+    """Generates an interactive Plotly Bump Chart using rolling X-month returns"""
     all_close_data = {}
     
     with st.spinner(f"Fetching data for {group_name} Bump Chart..."):
-        # 1. Fetch data for each ticker using the custom data_loader
+        # 1. Fetch 5 years of data for the bump chart to ensure we have enough history 
+        # to calculate the 3/6/9 month lookbacks accurately before slicing to the user's view.
         for ticker in tickers_dict.keys():
-            df = fetch_data(ticker=ticker, interval=interval, period=period, custom_days=custom_days)
+            df = fetch_data(ticker=ticker, interval='1d', period='5y')
             if df is not None and not df.empty and 'Close' in df.columns:
-                # Remove duplicate indices if any
                 df = df.loc[~df.index.duplicated(keep='first')]
                 all_close_data[ticker] = df['Close']
                 
@@ -140,98 +138,94 @@ def plot_bump_chart(tickers_dict, group_name, interval, period, custom_days, sty
         # 2. Combine into a single DataFrame
         combined_df = pd.DataFrame(all_close_data)
         
-        # 3. Resample to reduce noise (Monthly for >=1yr, Weekly for shorter)
+        # 3. Resample to Monthly End
         try:
-            if period in ['1y', '2y', '5y', '10y']:
-                resampled = combined_df.resample('ME').last() # Monthly
-                x_format = '%b %Y'
-                period_type = 'Month'
-            else:
-                resampled = combined_df.resample('W').last() # Weekly for shorter periods
-                x_format = '%b %d'
-                period_type = 'Week'
+            resampled = combined_df.resample('ME').last()
         except ValueError:
-             # Fallback for older pandas versions
-            if period in ['1y', '2y', '5y', '10y']:
-                resampled = combined_df.resample('M').last() 
-                x_format = '%b %Y'
-                period_type = 'Month'
-            else:
-                resampled = combined_df.resample('W').last() 
-                x_format = '%b %d'
-                period_type = 'Week'
-
+            resampled = combined_df.resample('M').last() # Fallback for older pandas
+            
         resampled = resampled.dropna(how='all').ffill().bfill()
         
-        # 4. Calculate Rolling Return and Rank
-        # Instead of cum_return, we use pct_change over the selected rolling window
-        rolling_return = resampled.pct_change(periods=rolling_window)
-        
-        # Drop the initial rows that are NaN due to the rolling window calculation
+        # 4. Calculate Rolling X-Month Return and Rank
+        rolling_return = resampled.pct_change(periods=lookback_months)
         rolling_return = rolling_return.dropna(how='all')
         
         if len(rolling_return) < 2:
-            st.warning(f"Not enough data points after applying a {rolling_window}-period rolling window. Try a longer timeframe or a shorter lookback.")
+            st.warning(f"Not enough data points after applying a {lookback_months}-month rolling window.")
             return
 
         ranks = rolling_return.rank(axis=1, ascending=False, method='min')
         
-        # 5. Plotting Setup
-        fig, ax = plt.subplots(figsize=(10, 5))
+        # 5. Slice the dataframe to match the user's overall selected grid period
+        # so the bump chart matches the grid's timeframe visually.
+        slice_map = {'1mo': 3, '3mo': 4, '6mo': 7, '1y': 13, '2y': 25}
+        slice_n = slice_map.get(period_sel, len(ranks))
+        ranks = ranks.iloc[-slice_n:]
         
+        # 6. Prepare data for Plotly (Melt to Long Format)
+        ranks_reset = ranks.reset_index()
+        df_melted = ranks_reset.melt(id_vars='Date', var_name='Ticker', value_name='Rank')
+        df_melted['Name'] = df_melted['Ticker'].map(tickers_dict)
+        
+        # Determine total number of valid assets to set Y-axis limit
+        max_rank = int(df_melted['Rank'].max())
+        
+        # 7. Build Plotly Chart
         is_dark = (style == 'nightclouds')
         bg_color = '#0E1117' if is_dark else 'white'
         text_color = 'white' if is_dark else 'black'
-        
-        fig.patch.set_facecolor(bg_color)
-        ax.set_facecolor(bg_color)
-        
-        colors = plt.cm.tab10(np.linspace(0, 1, len(ranks.columns)))
-        
-        # Calculate time span for right-padding labels
-        time_span = ranks.index[-1] - ranks.index[0]
-        
-        # 6. Draw the Lines and Labels
-        for idx, ticker in enumerate(ranks.columns):
-            name = tickers_dict.get(ticker, ticker)
-            ax.plot(ranks.index, ranks[ticker], marker='o', label=name, 
-                    linewidth=3, markersize=8, color=colors[idx % 10])
-            
-            # Add label to the rightmost point
-            last_date = ranks.index[-1]
-            last_rank = ranks[ticker].iloc[-1]
-            ax.text(last_date + (time_span * 0.02), last_rank, name, 
-                    va='center', ha='left', fontsize=9, fontweight='bold', color=colors[idx % 10])
 
-        # Extend x-axis limit so labels don't get cut off
-        ax.set_xlim(ranks.index[0], ranks.index[-1] + (time_span * 0.15))
+        fig = px.line(
+            df_melted, 
+            x='Date', 
+            y='Rank', 
+            color='Name', 
+            markers=True,
+            title=f"🏆 {group_name} - {lookback_months}M Rolling Performance Rank",
+            hover_data={"Date": "|%B %Y", "Ticker": False}
+        )
+        
+        # Update traces for thicker lines and larger markers
+        fig.update_traces(line=dict(width=4), marker=dict(size=10))
 
-        # Invert Y-axis so Rank #1 is at the top
-        ax.invert_yaxis()
-        ax.set_yticks(range(1, len(ranks.columns) + 1))
-        ax.set_xticks(ranks.index)
-        ax.set_xticklabels([d.strftime(x_format) for d in ranks.index], rotation=45, color=text_color)
-        ax.tick_params(axis='y', colors=text_color)
+        # Update layout properties
+        fig.update_layout(
+            template="plotly_dark" if is_dark else "plotly_white",
+            paper_bgcolor=bg_color,
+            plot_bgcolor=bg_color,
+            font=dict(color=text_color),
+            yaxis=dict(
+                autorange="reversed", # Rank #1 at the top
+                tickvals=list(range(1, max_rank + 1)),
+                title="",
+                gridcolor='#333333' if is_dark else '#e0e0e0',
+                zeroline=False
+            ),
+            xaxis=dict(
+                title="",
+                gridcolor='#333333' if is_dark else '#e0e0e0',
+                dtick="M1", # Ensure monthly ticks
+                tickformat="%b\n%Y"
+            ),
+            legend=dict(
+                title="",
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            hovermode="x unified",
+            margin=dict(l=20, r=20, t=60, b=20)
+        )
         
-        # Dynamic title reflecting the period type (Week vs Month)
-        title_str = f"🏆 {group_name} - Relative Performance Rank ({rolling_window}-{period_type} Rolling)"
-        ax.set_title(title_str, pad=20, fontweight='bold', fontsize=12, color=text_color)
-        
-        # Grid and Spines styling
-        ax.grid(axis='y', linestyle='--', alpha=0.3, color=text_color)
-        ax.grid(axis='x', linestyle='--', alpha=0.1, color=text_color)
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        ax.tick_params(axis='both', which='both', length=0)
-        
-        fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        # Display the Plotly chart
+        st.plotly_chart(fig, use_container_width=True)
 
 # --- 4. Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ GRID CONTROLS")
-    period_sel = st.selectbox('PERIOD', ['1mo', '3mo', '6mo', '1y', '2y'], index=1)
+    period_sel = st.selectbox('PERIOD', ['1mo', '3mo', '6mo', '1y', '2y'], index=3)
     interval_sel = st.selectbox('INTERVAL', ['1d', '1h', '15m', 'Custom Days'], index=0)
     
     is_custom = (interval_sel == 'Custom Days')
@@ -251,8 +245,14 @@ with st.sidebar:
 
     st.divider()
     st.markdown("#### BUMP CHART")
-    rolling_bars = st.slider('ROLLING LOOKBACK (BARS)', min_value=1, max_value=12, value=3, 
-                             help="Number of resampled periods (months or weeks depending on the selected timeframe) to calculate the rolling performance rank.")
+    # Updated to radio buttons for 3, 6, and 9 month explicit lookbacks
+    lookback_sel = st.radio(
+        'ROLLING LOOKBACK', 
+        options=[3, 6, 9], 
+        format_func=lambda x: f"{x} Months",
+        horizontal=True,
+        help="Calculates the relative performance rank based on a rolling lookback window."
+    )
     
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
@@ -265,14 +265,12 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
         
         # --- BUMP CHART EXPANDER ---
         with st.expander(f"📊 View {group_name} Performance Bump Chart", expanded=False):
-            plot_bump_chart(
+            plot_bump_chart_plotly(
                 tickers_dict=tickers, 
                 group_name=group_name, 
-                interval=interval_sel, 
-                period=period_sel, 
-                custom_days=day_slider if is_custom else None, 
+                period_sel=period_sel,
                 style=style_sel,
-                rolling_window=rolling_bars
+                lookback_months=lookback_sel
             )
             
         st.divider()
