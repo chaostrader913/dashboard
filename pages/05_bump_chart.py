@@ -114,132 +114,157 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
         return fig
 
-def plot_bump_chart_plotly(tickers_dict, group_name, period_sel, style, lookback_months):
-    """Generates an interactive Plotly Bump Chart using rolling X-month returns"""
-    all_close_data = {}
+def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel, style, lookback_months):
+    """Generates an interactive Plotly Bump Chart from pre-calculated resampled data"""
+    rolling_return = resampled_data.pct_change(periods=lookback_months)
+    rolling_return = rolling_return.dropna(how='all')
     
-    with st.spinner(f"Fetching data for {group_name} Bump Chart..."):
-        for ticker in tickers_dict.keys():
+    if len(rolling_return) < 2:
+        st.warning(f"Not enough data points after applying a {lookback_months}-month rolling window.")
+        return
+
+    ranks = rolling_return.rank(axis=1, ascending=False, method='min')
+    
+    # Slice to match the UI timeframe
+    slice_map = {'1mo': 3, '3mo': 4, '6mo': 7, '1y': 13, '2y': 25}
+    slice_n = slice_map.get(period_sel, len(ranks))
+    ranks = ranks.iloc[-slice_n:]
+    
+    ranks_reset = ranks.reset_index()
+    df_melted = ranks_reset.melt(id_vars='Date', var_name='Ticker', value_name='Rank')
+    df_melted['Name'] = df_melted['Ticker'].map(tickers_dict)
+    
+    max_rank = int(df_melted['Rank'].max())
+    
+    is_dark = (style == 'nightclouds')
+    bg_color = '#0E1117' if is_dark else 'white'
+    text_color = 'white' if is_dark else 'black'
+
+    fig = px.line(
+        df_melted, 
+        x='Date', 
+        y='Rank', 
+        color='Name', 
+        markers=True,
+        title=f"🏆 {group_name} - {lookback_months}M Rolling Performance Rank",
+        hover_data={"Date": "|%B %Y", "Ticker": False}
+    )
+    
+    fig.update_traces(line=dict(width=4), marker=dict(size=10))
+
+    last_date = df_melted['Date'].max()
+    for ticker_name in df_melted['Name'].unique():
+        ticker_data = df_melted[(df_melted['Name'] == ticker_name) & (df_melted['Date'] == last_date)]
+        if not ticker_data.empty:
+            last_rank = ticker_data['Rank'].values[0]
+            trace_color = next(trace.line.color for trace in fig.data if trace.name == ticker_name)
+
+            fig.add_annotation(
+                x=last_date,
+                y=last_rank,
+                text=f" {ticker_name}",
+                showarrow=False,
+                xanchor='left',
+                yanchor='middle',
+                font=dict(size=11, color=trace_color, family="Arial Black")
+            )
+
+    fig.update_layout(
+        template="plotly_dark" if is_dark else "plotly_white",
+        paper_bgcolor=bg_color,
+        plot_bgcolor=bg_color,
+        font=dict(color=text_color),
+        yaxis=dict(
+            autorange="reversed",
+            tickvals=list(range(1, max_rank + 1)),
+            title="",
+            gridcolor='#333333' if is_dark else '#e0e0e0',
+            zeroline=False
+        ),
+        xaxis=dict(
+            title="",
+            gridcolor='#333333' if is_dark else '#e0e0e0',
+            dtick="M1", 
+            tickformat="%b\n%Y"
+        ),
+        legend=dict(
+            title="",
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        hovermode="x unified",
+        margin=dict(l=20, r=120, t=60, b=20) 
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+# --- Fragment for the Bump Chart & Summary Table ---
+@st.fragment
+def render_bump_chart_ui(tickers, group_name, period_sel, style_sel):
+    # 1. Fetch data once for both the table and the chart
+    all_close_data = {}
+    with st.spinner(f"Processing data for {group_name} Bump Chart..."):
+        for ticker in tickers.keys():
             df = fetch_data(ticker=ticker, interval='1d', period='5y')
             if df is not None and not df.empty and 'Close' in df.columns:
                 df = df.loc[~df.index.duplicated(keep='first')]
                 all_close_data[ticker] = df['Close']
                 
-        if not all_close_data:
-            st.warning(f"No valid data available to build bump chart for {group_name}")
-            return
+    if not all_close_data:
+        st.warning(f"No valid data available to build bump chart for {group_name}")
+        return
+        
+    combined_df = pd.DataFrame(all_close_data)
+    
+    try:
+        resampled = combined_df.resample('ME').last()
+    except ValueError:
+        resampled = combined_df.resample('M').last() 
+        
+    resampled = resampled.dropna(how='all').ffill().bfill()
+    
+    # 2. Build the Latest Ranks Summary Table
+    lookbacks = [3, 6, 9]
+    summary_data = {}
+    
+    for lb in lookbacks:
+        roll_ret = resampled.pct_change(periods=lb).dropna(how='all')
+        if not roll_ret.empty:
+            # Get the rank of the very last available month
+            ranks = roll_ret.rank(axis=1, ascending=False, method='min').iloc[-1]
+            summary_data[f"{lb}M Rank"] = ranks
             
-        combined_df = pd.DataFrame(all_close_data)
+    if summary_data:
+        summary_df = pd.DataFrame(summary_data)
+        # Map tickers to names for readability
+        summary_df.index = summary_df.index.map(lambda x: tickers.get(x, x))
+        summary_df.index.name = "Asset"
         
-        try:
-            resampled = combined_df.resample('ME').last()
-        except ValueError:
-            resampled = combined_df.resample('M').last() 
-            
-        resampled = resampled.dropna(how='all').ffill().bfill()
+        # Sort ascending by 3M Rank, then convert to nullable integers to remove decimals
+        if "3M Rank" in summary_df.columns:
+            summary_df = summary_df.sort_values("3M Rank")
+        summary_df = summary_df.astype('Int64')
         
-        rolling_return = resampled.pct_change(periods=lookback_months)
-        rolling_return = rolling_return.dropna(how='all')
-        
-        if len(rolling_return) < 2:
-            st.warning(f"Not enough data points after applying a {lookback_months}-month rolling window.")
-            return
+        st.markdown(f"**Current Leaderboard (Latest Month)**")
+        st.dataframe(summary_df, use_container_width=True)
+    
+    st.divider()
 
-        ranks = rolling_return.rank(axis=1, ascending=False, method='min')
-        
-        slice_map = {'1mo': 3, '3mo': 4, '6mo': 7, '1y': 13, '2y': 25}
-        slice_n = slice_map.get(period_sel, len(ranks))
-        ranks = ranks.iloc[-slice_n:]
-        
-        ranks_reset = ranks.reset_index()
-        df_melted = ranks_reset.melt(id_vars='Date', var_name='Ticker', value_name='Rank')
-        df_melted['Name'] = df_melted['Ticker'].map(tickers_dict)
-        
-        max_rank = int(df_melted['Rank'].max())
-        
-        is_dark = (style == 'nightclouds')
-        bg_color = '#0E1117' if is_dark else 'white'
-        text_color = 'white' if is_dark else 'black'
-
-        fig = px.line(
-            df_melted, 
-            x='Date', 
-            y='Rank', 
-            color='Name', 
-            markers=True,
-            title=f"🏆 {group_name} - {lookback_months}M Rolling Performance Rank",
-            hover_data={"Date": "|%B %Y", "Ticker": False}
-        )
-        
-        fig.update_traces(line=dict(width=4), marker=dict(size=10))
-
-        # --- FIX: Add Text Annotations to the end of the lines ---
-        last_date = df_melted['Date'].max()
-        for ticker_name in df_melted['Name'].unique():
-            ticker_data = df_melted[(df_melted['Name'] == ticker_name) & (df_melted['Date'] == last_date)]
-            if not ticker_data.empty:
-                last_rank = ticker_data['Rank'].values[0]
-                
-                # Fetch the color Plotly assigned to this trace to match the text color
-                trace_color = next(trace.line.color for trace in fig.data if trace.name == ticker_name)
-
-                fig.add_annotation(
-                    x=last_date,
-                    y=last_rank,
-                    text=f" {ticker_name}",
-                    showarrow=False,
-                    xanchor='left',
-                    yanchor='middle',
-                    font=dict(size=11, color=trace_color, family="Arial Black")
-                )
-
-        fig.update_layout(
-            template="plotly_dark" if is_dark else "plotly_white",
-            paper_bgcolor=bg_color,
-            plot_bgcolor=bg_color,
-            font=dict(color=text_color),
-            yaxis=dict(
-                autorange="reversed",
-                tickvals=list(range(1, max_rank + 1)),
-                title="",
-                gridcolor='#333333' if is_dark else '#e0e0e0',
-                zeroline=False
-            ),
-            xaxis=dict(
-                title="",
-                gridcolor='#333333' if is_dark else '#e0e0e0',
-                dtick="M1", 
-                tickformat="%b\n%Y"
-            ),
-            legend=dict(
-                title="",
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            ),
-            hovermode="x unified",
-            # FIX: Expand right margin to ensure text annotations fit on screen
-            margin=dict(l=20, r=120, t=60, b=20) 
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-
-# --- NEW: Isolated Fragment for the Bump Chart ---
-# Any widget interacted with INSIDE this function will only rerun this function.
-@st.fragment
-def render_bump_chart_ui(tickers, group_name, period_sel, style_sel):
+    # 3. Interactive Chart Controls
     lookback_sel = st.pills(
-        f"Select Lookback Period", 
+        f"Select Lookback Period for Chart", 
         options=[3, 6, 9], 
         format_func=lambda x: f"{x} Months",
         default=3,
-        key=f"lookback_{group_name}" # Unique key required for each tab
+        key=f"lookback_{group_name}" 
     )
-    # Default to 3 if nothing is clicked
     safe_lookback = lookback_sel if lookback_sel else 3 
-    plot_bump_chart_plotly(tickers, group_name, period_sel, style_sel, safe_lookback)
+    
+    # Pass the pre-processed data directly into the plot function
+    plot_bump_chart_plotly(resampled, tickers, group_name, period_sel, style_sel, safe_lookback)
 
 # --- 4. Sidebar Controls ---
 with st.sidebar:
@@ -264,7 +289,6 @@ with st.sidebar:
     
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
-    # (Removed Bump Chart lookback slider from here to prevent full app reruns)
 
 # --- 5. Main App Execution (Tabs & Grid) ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
@@ -274,8 +298,6 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
         
         # --- BUMP CHART EXPANDER ---
         with st.expander(f"📊 View {group_name} Performance Bump Chart", expanded=False):
-            # Call the fragment function. Interacting with the lookback pills here 
-            # will NO LONGER reload the heavy grid below!
             render_bump_chart_ui(tickers, group_name, period_sel, style_sel)
             
         st.divider()
