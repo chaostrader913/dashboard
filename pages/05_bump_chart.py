@@ -1,57 +1,292 @@
 import streamlit as st
-import yfinance as yf
-from lightweight_charts_v5 import lightweight_charts_v5_component
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import mplfinance as mpf
+import warnings
 
-st.set_page_config(layout="wide")
-st.title("📈 TradingView Dashboard")
+# --- IMPORT GLOBALS ---
+from utils.data_loader import fetch_data
+from utils.indicators import apply_td_sequential, apply_rsi_divergence
 
-# 1. Sidebar for User Input
-ticker = st.sidebar.text_input("Enter Ticker", value="AAPL").upper()
-timeframe = st.sidebar.selectbox("Timeframe", ["1d", "1h", "15m", "5m"])
+# Suppress warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*MOVING Averages IGNORED.*")
 
-# 2. Fetch Data
-data = yf.download(ticker, period="1y", interval=timeframe)
+st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
+st.caption("STATIC SNAPSHOT ENGINE // BIRD'S EYE VIEW")
 
-if not data.empty:
-    # 3. Format data for the chart component
-    # The component expects a list of dicts with 'time' and 'value' (or OHLC keys)
-    chart_data = [
-        {
-            "time": str(date.date()) if timeframe == "1d" else int(date.timestamp()),
-            "open": float(row["Open"]),
-            "high": float(row["High"]),
-            "low": float(row["Low"]),
-            "close": float(row["Close"]),
-        }
-        for date, row in data.iterrows()
-    ]
-
-    # 4. Render the Chart
-    chart_options = {
-        "layout": {"background": {"color": "#131722"}, "textColor": "#d1d4dc"},
-        "grid": {"vertLines": {"color": "#242733"}, "horzLines": {"color": "#242733"}},
-        "crosshair": {"mode": 0},
-        "priceScale": {"borderColor": "#485c7b"},
-        "timeScale": {"borderColor": "#485c7b", "timeVisible": True},
+# --- 2. Upgraded Institutional Ticker Database ---
+TICKER_GROUPS = {
+    'Indices (US)': {
+        '^GSPC': 'S&P 500', '^DJI': 'Dow Jones', 'QQQ': 'Nasdaq 100', 'IWM': 'Russell 2000',
+        'MTUM': 'US Momentum', 'VLUE': 'US Value', 'QUAL': 'US Quality', 'USMV': 'US Min Vol'
+    },
+    'Sectors (US)': {
+        'XLK': 'Technology', 'XLV': 'Healthcare', 'XLF': 'Financials', 'XLE': 'Energy', 
+        'XLI': 'Industrials', 'XLY': 'Cons. Disc.', 'XLP': 'Cons. Staples', 
+        'XLU': 'Utilities', 'XLB': 'Materials', 'XLRE': 'Real Estate', 'XLC': 'Comm. Svcs'
+    },
+    'Themes (US)': {
+        'SMH': 'Semiconductors', 'IGV': 'Software', 'XBI': 'Biotech', 'ARKK': 'Innovation', 
+        'TAN': 'Solar', 'URA': 'Uranium', 'LIT': 'Lithium', 'PAVE': 'Infrastructure'
+    },
+    'International': {
+        'VEA': 'Dev ex-US', 'VWO': 'Emerging Mkts', 'EWJ': 'Japan', 
+        'FXI': 'China Large', 'INDA': 'India', 'EWG': 'Germany', 'EWU': 'UK', 'EWZ': 'Brazil'
+    },
+    'Fixed Income ETFs': {
+        'SHY': '1-3Y Treas', 'IEF': '7-10Y Treas', 'TLT': '20Y+ Treas',
+        'LQD': 'Inv. Grade', 'HYG': 'High Yield', 'BND': 'Total Bond', 
+        'MBB': 'MBS ETF', 'TIP': 'TIPS Bond'
+    },
+    'Commodity, Currencies & Crypto': {
+        'GLD': 'Gold', 'SLV': 'Silver', 'USO': 'Crude Oil', 'UUP': 'US Dollar', 
+        'FXE': 'Euro', 'FXY': 'Jap Yen', 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum'
+    },
+    'Major Stocks by Market Cap': {
+        'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'Nvidia', 'GOOGL': 'Alphabet',
+        'AMZN': 'Amazon', 'META': 'Meta', 'BRK-B': 'Berkshire', 'TSLA': 'Tesla'
     }
+}
 
-    # Display the component
-    lightweight_charts_v5_component(
-        charts=[{
-            "chart": chart_options,
-            "series": [{
-                "type": "Candlestick",
-                "data": chart_data,
-                "options": {
-                    "upColor": "#26a69a",
-                    "downColor": "#ef5350",
-                    "borderVisible": False,
-                    "wickUpColor": "#26a69a",
-                    "wickDownColor": "#ef5350",
-                }
-            }]
-        }],
-        key="tradingview_chart"
-    )
-else:
-    st.error("No data found for this ticker.")
+# --- 3. Plotting Engine ---
+def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol, show_tdsq, show_rsi):
+    tech_types = {'OHLC': 'ohlc', 'Candlestick': 'candle', 'Renko': 'renko', 'Point and Figure': 'pnf'}
+    
+    if chart_type in tech_types:
+        mpf_type = tech_types[chart_type]
+        current_style = style if not (mpf_type in ['renko', 'pnf'] and style == 'mike') else 'yahoo'
+
+        kwargs = dict(
+            type=mpf_type, style=current_style, show_nontrading=False, returnfig=True,
+            title=f"{name} ({ticker})", figsize=(5, 3.2), 
+            tight_layout=False # We handle the layout manually below to protect the title
+        )
+        
+        if show_sma and mpf_type not in ['renko', 'pnf']: kwargs['mav'] = (20,)
+        if show_vol and 'Volume' in data.columns: kwargs['volume'] = True
+        if mpf_type == 'renko': kwargs['renko_params'] = {'brick_size': 'atr'}
+        elif mpf_type == 'pnf': kwargs['pnf_params'] = {'box_size': 'atr'}
+
+        # --- SIGNAL OVERLAYS ---
+        apds = []
+        if mpf_type not in ['renko', 'pnf']:
+            # 1. TDSQ Signals (Green for 9, Red for 13)
+            if show_tdsq and 'Setup_Signal' in data.columns:
+                b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
+                s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
+                b13 = np.where(data['Countdown_Signal'] == 1, data['Low'] * 0.96, np.nan)
+                s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.04, np.nan)
+                
+                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
+                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
+                
+                if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
+                if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
+
+            # 2. RSI Divergence Signals
+            if show_rsi and 'Signal' in data.columns:
+                rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.95, np.nan)
+                if not np.isnan(rsi_b).all(): apds.append(mpf.make_addplot(rsi_b, type='scatter', marker='^', color='#00AAFF', markersize=80))
+
+            if apds: kwargs['addplot'] = apds
+
+        fig, axlist = mpf.plot(data, **kwargs)
+        
+        if style == 'nightclouds': fig.patch.set_facecolor('#0E1117')
+        
+        # Protect the title and right-side axis labels
+        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
+        return fig
+        
+    else:
+        # Fallback Line Chart
+        fig, ax = plt.subplots(figsize=(5, 3.2))
+        prices = data['Close']
+        ax.plot(prices.index, prices, linewidth=1.5, color='#00FFAA' if style=='nightclouds' else 'blue')
+        if show_sma: ax.plot(prices.index, prices.rolling(20).mean(), linestyle='--', color='gray', alpha=0.7)
+            
+        ax.set_title(f"{name} ({ticker})", fontsize=10, color='white' if style=='nightclouds' else 'black', pad=12)
+        
+        if style == 'nightclouds':
+            fig.patch.set_facecolor('#0E1117')
+            ax.set_facecolor('#0E1117')
+            ax.tick_params(colors='white')
+            for spine in ax.spines.values(): spine.set_edgecolor('#2B3040')
+                
+        ax.tick_params(axis='x', rotation=45, labelsize=8)
+        ax.tick_params(axis='y', labelsize=8)
+        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
+        return fig
+
+def plot_bump_chart(tickers_dict, group_name, interval, period, custom_days, style):
+    """Generates a Bump Chart using the custom fetch_data loader"""
+    all_close_data = {}
+    
+    with st.spinner(f"Fetching data for {group_name} Bump Chart..."):
+        # 1. Fetch data for each ticker using the custom data_loader
+        for ticker in tickers_dict.keys():
+            df = fetch_data(ticker=ticker, interval=interval, period=period, custom_days=custom_days)
+            if df is not None and not df.empty and 'Close' in df.columns:
+                # Remove duplicate indices if any
+                df = df.loc[~df.index.duplicated(keep='first')]
+                all_close_data[ticker] = df['Close']
+                
+        if not all_close_data:
+            st.warning(f"No valid data available to build bump chart for {group_name}")
+            return
+            
+        # 2. Combine into a single DataFrame
+        combined_df = pd.DataFrame(all_close_data)
+        
+        # 3. Resample to reduce noise (Bump charts get too messy with daily data over long periods)
+        try:
+            if period in ['1y', '2y', '5y', '10y']:
+                resampled = combined_df.resample('ME').last() # Monthly
+                x_format = '%b %Y'
+            else:
+                resampled = combined_df.resample('W').last() # Weekly for shorter periods
+                x_format = '%b %d'
+        except ValueError:
+             # Fallback for older pandas versions
+            if period in ['1y', '2y', '5y', '10y']:
+                resampled = combined_df.resample('M').last() 
+                x_format = '%b %Y'
+            else:
+                resampled = combined_df.resample('W').last() 
+                x_format = '%b %d'
+
+        resampled = resampled.dropna(how='all').ffill().bfill()
+        
+        if len(resampled) < 2:
+            st.warning("Not enough data points for a meaningful bump chart. Try a longer period.")
+            return
+
+        # 4. Calculate Cumulative Return and Rank
+        cum_return = (resampled / resampled.iloc[0]) - 1
+        ranks = cum_return.rank(axis=1, ascending=False, method='min')
+        
+        # 5. Plotting Setup
+        fig, ax = plt.subplots(figsize=(10, 5))
+        
+        is_dark = (style == 'nightclouds')
+        bg_color = '#0E1117' if is_dark else 'white'
+        text_color = 'white' if is_dark else 'black'
+        
+        fig.patch.set_facecolor(bg_color)
+        ax.set_facecolor(bg_color)
+        
+        colors = plt.cm.tab10(np.linspace(0, 1, len(ranks.columns)))
+        
+        # Calculate time span for right-padding labels
+        time_span = ranks.index[-1] - ranks.index[0]
+        
+        # 6. Draw the Lines and Labels
+        for idx, ticker in enumerate(ranks.columns):
+            name = tickers_dict.get(ticker, ticker)
+            ax.plot(ranks.index, ranks[ticker], marker='o', label=name, 
+                    linewidth=3, markersize=8, color=colors[idx % 10])
+            
+            # Add label to the rightmost point
+            last_date = ranks.index[-1]
+            last_rank = ranks[ticker].iloc[-1]
+            ax.text(last_date + (time_span * 0.02), last_rank, name, 
+                    va='center', ha='left', fontsize=9, fontweight='bold', color=colors[idx % 10])
+
+        # Extend x-axis limit so labels don't get cut off
+        ax.set_xlim(ranks.index[0], ranks.index[-1] + (time_span * 0.15))
+
+        # Invert Y-axis so Rank #1 is at the top
+        ax.invert_yaxis()
+        ax.set_yticks(range(1, len(ranks.columns) + 1))
+        ax.set_xticks(ranks.index)
+        ax.set_xticklabels([d.strftime(x_format) for d in ranks.index], rotation=45, color=text_color)
+        ax.tick_params(axis='y', colors=text_color)
+        
+        ax.set_title(f"🏆 {group_name} - Relative Performance Rank (Cumulative)", pad=20, fontweight='bold', fontsize=12, color=text_color)
+        
+        # Grid and Spines styling
+        ax.grid(axis='y', linestyle='--', alpha=0.3, color=text_color)
+        ax.grid(axis='x', linestyle='--', alpha=0.1, color=text_color)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.tick_params(axis='both', which='both', length=0)
+        
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+# --- 4. Sidebar Controls ---
+with st.sidebar:
+    st.header("⚙️ GRID CONTROLS")
+    period_sel = st.selectbox('PERIOD', ['1mo', '3mo', '6mo', '1y', '2y'], index=1)
+    interval_sel = st.selectbox('INTERVAL', ['1d', '1h', '15m', 'Custom Days'], index=0)
+    
+    is_custom = (interval_sel == 'Custom Days')
+    day_slider = st.slider('CUSTOM BARS (DAYS)', min_value=2, max_value=10, value=3, disabled=not is_custom)
+    
+    st.divider()
+    chart_sel = st.selectbox('CHART TYPE', ['Candlestick', 'OHLC', 'Line', 'Renko', 'Point and Figure'], index=0)
+    style_sel = st.selectbox('THEME', ['nightclouds', 'yahoo', 'blueskies', 'mike'], index=0) 
+    
+    st.divider()
+    st.markdown("#### OVERLAYS")
+    sma_check = st.checkbox('20 SMA', value=True)
+    vol_check = st.checkbox('VOLUME', value=True)
+    
+    tdsq_check = st.checkbox('TDSQ (9 & 13)', value=True)
+    rsi_check = st.checkbox('RSI DIVERGENCE', value=True)
+    
+    st.divider()
+    cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
+
+# --- 5. Main App Execution (Tabs & Grid) ---
+tabs = st.tabs(list(TICKER_GROUPS.keys()))
+
+for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
+    with tab:
+        
+        # --- BUMP CHART EXPANDER ---
+        with st.expander(f"📊 View {group_name} Performance Bump Chart", expanded=False):
+            plot_bump_chart(
+                tickers_dict=tickers, 
+                group_name=group_name, 
+                interval=interval_sel, 
+                period=period_sel, 
+                custom_days=day_slider if is_custom else None, 
+                style=style_sel
+            )
+            
+        st.divider()
+        
+        # --- GRID PLOTS ---
+        cols = st.columns(cols_count)
+        for i, (ticker, name) in enumerate(tickers.items()):
+            with cols[i % cols_count]:
+                with st.spinner(f"Loading {ticker}..."):
+                    data = fetch_data(ticker=ticker, interval=interval_sel, period=period_sel, custom_days=day_slider)
+                    
+                    if data is not None and not data.empty:
+                        # FIX: Flatten MultiIndex columns if they exist
+                        if isinstance(data.columns, pd.MultiIndex):
+                            data.columns = data.columns.get_level_values(0)
+                
+                        # Remove any potential duplicate indices
+                        data = data.loc[~data.index.duplicated(keep='first')]
+                        # Apply indicators if selected
+                        if tdsq_check:
+                            try:
+                                data = apply_td_sequential(data)
+                            except: pass
+                        if rsi_check:
+                            try:
+                                data = apply_rsi_divergence(data)
+                            except: pass
+                            
+                        # Pass 'name' back into the plot function so it builds the title
+                        fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
+                        st.pyplot(fig)
+                        plt.close(fig) 
+                    else:
+                        st.error(f"ERR: {ticker}")
