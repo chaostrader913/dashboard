@@ -70,10 +70,8 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         if mpf_type == 'renko': kwargs['renko_params'] = {'brick_size': 'atr'}
         elif mpf_type == 'pnf': kwargs['pnf_params'] = {'box_size': 'atr'}
 
-        # --- SIGNAL OVERLAYS ---
         apds = []
         if mpf_type not in ['renko', 'pnf']:
-            # 1. TDSQ Signals
             if show_tdsq and 'Setup_Signal' in data.columns:
                 b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
                 s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
@@ -85,7 +83,6 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
                 if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
 
-            # 2. RSI Divergence Signals
             if show_rsi and 'Signal' in data.columns:
                 rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.95, np.nan)
                 if not np.isnan(rsi_b).all(): apds.append(mpf.make_addplot(rsi_b, type='scatter', marker='^', color='#00AAFF', markersize=80))
@@ -99,7 +96,6 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         return fig
         
     else:
-        # Fallback Line Chart
         fig, ax = plt.subplots(figsize=(5, 3.2))
         prices = data['Close']
         ax.plot(prices.index, prices, linewidth=1.5, color='#00FFAA' if style=='nightclouds' else 'blue')
@@ -123,8 +119,6 @@ def plot_bump_chart_plotly(tickers_dict, group_name, period_sel, style, lookback
     all_close_data = {}
     
     with st.spinner(f"Fetching data for {group_name} Bump Chart..."):
-        # 1. Fetch 5 years of data for the bump chart to ensure we have enough history 
-        # to calculate the 3/6/9 month lookbacks accurately before slicing to the user's view.
         for ticker in tickers_dict.keys():
             df = fetch_data(ticker=ticker, interval='1d', period='5y')
             if df is not None and not df.empty and 'Close' in df.columns:
@@ -135,18 +129,15 @@ def plot_bump_chart_plotly(tickers_dict, group_name, period_sel, style, lookback
             st.warning(f"No valid data available to build bump chart for {group_name}")
             return
             
-        # 2. Combine into a single DataFrame
         combined_df = pd.DataFrame(all_close_data)
         
-        # 3. Resample to Monthly End
         try:
             resampled = combined_df.resample('ME').last()
         except ValueError:
-            resampled = combined_df.resample('M').last() # Fallback for older pandas
+            resampled = combined_df.resample('M').last() 
             
         resampled = resampled.dropna(how='all').ffill().bfill()
         
-        # 4. Calculate Rolling X-Month Return and Rank
         rolling_return = resampled.pct_change(periods=lookback_months)
         rolling_return = rolling_return.dropna(how='all')
         
@@ -156,21 +147,16 @@ def plot_bump_chart_plotly(tickers_dict, group_name, period_sel, style, lookback
 
         ranks = rolling_return.rank(axis=1, ascending=False, method='min')
         
-        # 5. Slice the dataframe to match the user's overall selected grid period
-        # so the bump chart matches the grid's timeframe visually.
         slice_map = {'1mo': 3, '3mo': 4, '6mo': 7, '1y': 13, '2y': 25}
         slice_n = slice_map.get(period_sel, len(ranks))
         ranks = ranks.iloc[-slice_n:]
         
-        # 6. Prepare data for Plotly (Melt to Long Format)
         ranks_reset = ranks.reset_index()
         df_melted = ranks_reset.melt(id_vars='Date', var_name='Ticker', value_name='Rank')
         df_melted['Name'] = df_melted['Ticker'].map(tickers_dict)
         
-        # Determine total number of valid assets to set Y-axis limit
         max_rank = int(df_melted['Rank'].max())
         
-        # 7. Build Plotly Chart
         is_dark = (style == 'nightclouds')
         bg_color = '#0E1117' if is_dark else 'white'
         text_color = 'white' if is_dark else 'black'
@@ -185,17 +171,35 @@ def plot_bump_chart_plotly(tickers_dict, group_name, period_sel, style, lookback
             hover_data={"Date": "|%B %Y", "Ticker": False}
         )
         
-        # Update traces for thicker lines and larger markers
         fig.update_traces(line=dict(width=4), marker=dict(size=10))
 
-        # Update layout properties
+        # --- FIX: Add Text Annotations to the end of the lines ---
+        last_date = df_melted['Date'].max()
+        for ticker_name in df_melted['Name'].unique():
+            ticker_data = df_melted[(df_melted['Name'] == ticker_name) & (df_melted['Date'] == last_date)]
+            if not ticker_data.empty:
+                last_rank = ticker_data['Rank'].values[0]
+                
+                # Fetch the color Plotly assigned to this trace to match the text color
+                trace_color = next(trace.line.color for trace in fig.data if trace.name == ticker_name)
+
+                fig.add_annotation(
+                    x=last_date,
+                    y=last_rank,
+                    text=f" {ticker_name}",
+                    showarrow=False,
+                    xanchor='left',
+                    yanchor='middle',
+                    font=dict(size=11, color=trace_color, family="Arial Black")
+                )
+
         fig.update_layout(
             template="plotly_dark" if is_dark else "plotly_white",
             paper_bgcolor=bg_color,
             plot_bgcolor=bg_color,
             font=dict(color=text_color),
             yaxis=dict(
-                autorange="reversed", # Rank #1 at the top
+                autorange="reversed",
                 tickvals=list(range(1, max_rank + 1)),
                 title="",
                 gridcolor='#333333' if is_dark else '#e0e0e0',
@@ -204,7 +208,7 @@ def plot_bump_chart_plotly(tickers_dict, group_name, period_sel, style, lookback
             xaxis=dict(
                 title="",
                 gridcolor='#333333' if is_dark else '#e0e0e0',
-                dtick="M1", # Ensure monthly ticks
+                dtick="M1", 
                 tickformat="%b\n%Y"
             ),
             legend=dict(
@@ -216,11 +220,26 @@ def plot_bump_chart_plotly(tickers_dict, group_name, period_sel, style, lookback
                 x=1
             ),
             hovermode="x unified",
-            margin=dict(l=20, r=20, t=60, b=20)
+            # FIX: Expand right margin to ensure text annotations fit on screen
+            margin=dict(l=20, r=120, t=60, b=20) 
         )
         
-        # Display the Plotly chart
         st.plotly_chart(fig, use_container_width=True)
+
+# --- NEW: Isolated Fragment for the Bump Chart ---
+# Any widget interacted with INSIDE this function will only rerun this function.
+@st.fragment
+def render_bump_chart_ui(tickers, group_name, period_sel, style_sel):
+    lookback_sel = st.pills(
+        f"Select Lookback Period", 
+        options=[3, 6, 9], 
+        format_func=lambda x: f"{x} Months",
+        default=3,
+        key=f"lookback_{group_name}" # Unique key required for each tab
+    )
+    # Default to 3 if nothing is clicked
+    safe_lookback = lookback_sel if lookback_sel else 3 
+    plot_bump_chart_plotly(tickers, group_name, period_sel, style_sel, safe_lookback)
 
 # --- 4. Sidebar Controls ---
 with st.sidebar:
@@ -242,20 +261,10 @@ with st.sidebar:
     
     tdsq_check = st.checkbox('TDSQ (9 & 13)', value=True)
     rsi_check = st.checkbox('RSI DIVERGENCE', value=True)
-
-    st.divider()
-    st.markdown("#### BUMP CHART")
-    # Updated to radio buttons for 3, 6, and 9 month explicit lookbacks
-    lookback_sel = st.radio(
-        'ROLLING LOOKBACK', 
-        options=[3, 6, 9], 
-        format_func=lambda x: f"{x} Months",
-        horizontal=True,
-        help="Calculates the relative performance rank based on a rolling lookback window."
-    )
     
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
+    # (Removed Bump Chart lookback slider from here to prevent full app reruns)
 
 # --- 5. Main App Execution (Tabs & Grid) ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
@@ -265,13 +274,9 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
         
         # --- BUMP CHART EXPANDER ---
         with st.expander(f"📊 View {group_name} Performance Bump Chart", expanded=False):
-            plot_bump_chart_plotly(
-                tickers_dict=tickers, 
-                group_name=group_name, 
-                period_sel=period_sel,
-                style=style_sel,
-                lookback_months=lookback_sel
-            )
+            # Call the fragment function. Interacting with the lookback pills here 
+            # will NO LONGER reload the heavy grid below!
+            render_bump_chart_ui(tickers, group_name, period_sel, style_sel)
             
         st.divider()
         
@@ -283,13 +288,10 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     data = fetch_data(ticker=ticker, interval=interval_sel, period=period_sel, custom_days=day_slider)
                     
                     if data is not None and not data.empty:
-                        # FIX: Flatten MultiIndex columns if they exist
                         if isinstance(data.columns, pd.MultiIndex):
                             data.columns = data.columns.get_level_values(0)
                 
-                        # Remove any potential duplicate indices
                         data = data.loc[~data.index.duplicated(keep='first')]
-                        # Apply indicators if selected
                         if tdsq_check:
                             try:
                                 data = apply_td_sequential(data)
@@ -299,7 +301,6 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                                 data = apply_rsi_divergence(data)
                             except: pass
                             
-                        # Pass 'name' back into the plot function so it builds the title
                         fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
                         st.pyplot(fig)
                         plt.close(fig) 
