@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import plotly.express as px
+import plotly.graph_objects as go
 import warnings
 
 # --- IMPORT GLOBALS ---
@@ -114,8 +115,8 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
         return fig
 
-def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel, style, lookback_months):
-    """Generates an interactive Plotly Bump Chart from pre-calculated resampled data"""
+def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel, style, lookback_months, highlight_name):
+    """Generates a Storytelling-style Plotly Bump Chart using Graph Objects"""
     rolling_return = resampled_data.pct_change(periods=lookback_months)
     rolling_return = rolling_return.dropna(how='all')
     
@@ -139,34 +140,71 @@ def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel,
     is_dark = (style == 'nightclouds')
     bg_color = '#0E1117' if is_dark else 'white'
     text_color = 'white' if is_dark else 'black'
-
-    fig = px.line(
-        df_melted, 
-        x='Date', 
-        y='Rank', 
-        color='Name', 
-        markers=True,
-        title=f"🏆 {group_name} - {lookback_months}M Rolling Performance Rank",
-        hover_data={"Date": "|%B %Y", "Ticker": False}
-    )
     
-    fig.update_traces(line=dict(width=4), marker=dict(size=10))
+    # Setup color palette
+    default_colors = px.colors.qualitative.Plotly if is_dark else px.colors.qualitative.D3
+    accent_color = '#00FFAA' if is_dark else '#D62728' 
+    grey_color = 'rgba(255, 255, 255, 0.15)' if is_dark else 'rgba(0, 0, 0, 0.12)'
 
-    last_date = df_melted['Date'].max()
-    for ticker_name in df_melted['Name'].unique():
-        ticker_data = df_melted[(df_melted['Name'] == ticker_name) & (df_melted['Date'] == last_date)]
-        if not ticker_data.empty:
-            last_rank = ticker_data['Rank'].values[0]
-            trace_color = next(trace.line.color for trace in fig.data if trace.name == ticker_name)
+    fig = go.Figure()
+    names = list(df_melted['Name'].unique())
+    is_highlight_mode = (highlight_name != "None (Show All)")
+    
+    # Ensure highlighted trace is drawn LAST so it sits perfectly on top of grey lines
+    if is_highlight_mode and highlight_name in names:
+        names.remove(highlight_name)
+        names.append(highlight_name)
 
+    # Build traces manually for complete styling control
+    for idx, name in enumerate(names):
+        ticker_data = df_melted[df_melted['Name'] == name]
+        
+        # Determine styling based on mode
+        if is_highlight_mode:
+            if name == highlight_name:
+                line_color = accent_color
+                line_width = 5
+                opacity = 1.0
+                marker_size = 12
+                show_marker = True
+            else:
+                line_color = grey_color
+                line_width = 2
+                opacity = 0.8
+                marker_size = 0
+                show_marker = False
+        else:
+            line_color = default_colors[idx % len(default_colors)]
+            line_width = 3.5
+            opacity = 1.0
+            marker_size = 8
+            show_marker = True
+
+        fig.add_trace(go.Scatter(
+            x=ticker_data['Date'],
+            y=ticker_data['Rank'],
+            mode='lines+markers' if show_marker else 'lines',
+            name=name,
+            line=dict(color=line_color, width=line_width),
+            marker=dict(size=marker_size, color=bg_color, line=dict(color=line_color, width=2)),
+            opacity=opacity,
+            hoverinfo='name+x+y'
+        ))
+        
+        # Add annotation at the end of the line
+        # Only label the highlighted one, OR all of them if nothing is highlighted
+        if show_marker or not is_highlight_mode: 
+            last_row = ticker_data.iloc[-1]
             fig.add_annotation(
-                x=last_date,
-                y=last_rank,
-                text=f" {ticker_name}",
+                x=last_row['Date'],
+                y=last_row['Rank'],
+                text=f" {name}",
                 showarrow=False,
                 xanchor='left',
                 yanchor='middle',
-                font=dict(size=11, color=trace_color, family="Arial Black")
+                font=dict(size=14 if is_highlight_mode else 11, 
+                          color=line_color, 
+                          family="Arial Black" if is_highlight_mode else "Arial")
             )
 
     fig.update_layout(
@@ -174,37 +212,38 @@ def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel,
         paper_bgcolor=bg_color,
         plot_bgcolor=bg_color,
         font=dict(color=text_color),
+        title=dict(
+            text=f"🏆 {group_name} - {lookback_months}M Rolling Performance Rank",
+            font=dict(size=18, family="Arial Black" if is_dark else "Arial"),
+            y=0.95
+        ),
         yaxis=dict(
             autorange="reversed",
             tickvals=list(range(1, max_rank + 1)),
-            title="",
-            gridcolor='#333333' if is_dark else '#e0e0e0',
-            zeroline=False
+            title="Relative Rank",
+            gridcolor='#222222' if is_dark else '#eeeeee',
+            zeroline=False,
+            showline=False
         ),
         xaxis=dict(
             title="",
-            gridcolor='#333333' if is_dark else '#e0e0e0',
+            gridcolor='#222222' if is_dark else '#eeeeee',
             dtick="M1", 
-            tickformat="%b\n%Y"
+            tickformat="%b\n%Y",
+            showline=False
         ),
-        legend=dict(
-            title="",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        ),
+        showlegend=False, # Dropped legend entirely to rely on the clean annotations
         hovermode="x unified",
-        margin=dict(l=20, r=120, t=60, b=20) 
+        margin=dict(l=60, r=140, t=80, b=40) 
     )
     
     st.plotly_chart(fig, use_container_width=True)
 
-# --- Fragment for the Bump Chart & Summary Table ---
+
+# --- Fragment for the Bump Chart & Controls ---
 @st.fragment
 def render_bump_chart_ui(tickers, group_name, period_sel, style_sel):
-    # 1. Fetch data once for both the table and the chart
+    # 1. Fetch data once
     all_close_data = {}
     with st.spinner(f"Processing data for {group_name} Bump Chart..."):
         for ticker in tickers.keys():
@@ -226,45 +265,30 @@ def render_bump_chart_ui(tickers, group_name, period_sel, style_sel):
         
     resampled = resampled.dropna(how='all').ffill().bfill()
     
-    # 2. Build the Latest Ranks Summary Table
-    lookbacks = [3, 6, 9]
-    summary_data = {}
-    
-    for lb in lookbacks:
-        roll_ret = resampled.pct_change(periods=lb).dropna(how='all')
-        if not roll_ret.empty:
-            # Get the rank of the very last available month
-            ranks = roll_ret.rank(axis=1, ascending=False, method='min').iloc[-1]
-            summary_data[f"{lb}M Rank"] = ranks
-            
-    if summary_data:
-        summary_df = pd.DataFrame(summary_data)
-        # Map tickers to names for readability
-        summary_df.index = summary_df.index.map(lambda x: tickers.get(x, x))
-        summary_df.index.name = "Asset"
-        
-        # Sort ascending by 3M Rank, then convert to nullable integers to remove decimals
-        if "3M Rank" in summary_df.columns:
-            summary_df = summary_df.sort_values("3M Rank")
-        summary_df = summary_df.astype('Int64')
-        
-        st.markdown(f"**Current Leaderboard (Latest Month)**")
-        st.dataframe(summary_df, use_container_width=True)
-    
-    st.divider()
+    # 2. Interactive Chart Controls layout
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        lookback_sel = st.pills(
+            f"Rolling Lookback", 
+            options=[3, 6, 9], 
+            format_func=lambda x: f"{x} Months",
+            default=3,
+            key=f"lookback_{group_name}" 
+        )
+    with c2:
+        names_list = ["None (Show All)"] + list(tickers.values())
+        highlight_sel = st.selectbox(
+            "Highlight Asset",
+            options=names_list,
+            index=0,
+            key=f"highlight_{group_name}"
+        )
 
-    # 3. Interactive Chart Controls
-    lookback_sel = st.pills(
-        f"Select Lookback Period for Chart", 
-        options=[3, 6, 9], 
-        format_func=lambda x: f"{x} Months",
-        default=3,
-        key=f"lookback_{group_name}" 
-    )
     safe_lookback = lookback_sel if lookback_sel else 3 
     
-    # Pass the pre-processed data directly into the plot function
-    plot_bump_chart_plotly(resampled, tickers, group_name, period_sel, style_sel, safe_lookback)
+    # 3. Render Chart
+    plot_bump_chart_plotly(resampled, tickers, group_name, period_sel, style_sel, safe_lookback, highlight_sel)
+
 
 # --- 4. Sidebar Controls ---
 with st.sidebar:
@@ -289,6 +313,7 @@ with st.sidebar:
     
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
+
 
 # --- 5. Main App Execution (Tabs & Grid) ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
