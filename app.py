@@ -8,7 +8,7 @@ page_chart = st.Page("pages/02_Chart_Grid.py", title="Chart Grid", icon="📊")
 page_scanner = st.Page("pages/03_Signal_Scanner.py", title="Signal Scanner", icon="📡")
 page_mtf = st.Page("pages/04_MTF_Analyzer.py", title="MTF Analyzer", icon="🚀")
 page_bump = st.Page("pages/05_bump_chart.py", title="Sector Rotation", icon="📈")
-page_chan = st.Page("pages/05_chan.py", title="Chan Theory", icon="📈")
+page_chan = st.Page("pages/06_chan.py", title="Chan Theory", icon="📈")
 
 # 2. Initialize the navigation
 # Passing them in a list dictates the order they appear in the sidebar
