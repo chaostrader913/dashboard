@@ -57,6 +57,10 @@ if df.empty:
 cycle_comp, trend_comp = sm.tsa.filters.hpfilter(df["Price"], lamb=14400)
 df["Detrended"] = cycle_comp
 
+# --- ADD THIS RIGHT AFTER YOUR TICKER/DATE INPUTS ---
+st_threshold = st.slider("Stability Threshold (Genuine %)", min_value=0.0, max_value=1.0, value=0.49, step=0.01)
+st.divider()
+
 # ---------------------------------------------------------
 # 2, 3, 4. Cycle Detection, Validation & Ranking
 # ---------------------------------------------------------
@@ -79,15 +83,12 @@ def analyze_cycles(data, min_len=10, max_len=300):
             amp = amplitudes[i]
             
             # --- Step 3: Cycle Validation (Stability / Genuine %) ---
-            # Proxy for Bartels Test using Phase Synchronization (Phase Locking Value)
-            # We split the data into chunks of size 'length' and measure phase consistency
             n_chunks = n // length
             if n_chunks >= 3:
                 chunk_phases = []
                 for c in range(n_chunks):
                     chunk = data.values[c * length : (c + 1) * length]
                     chunk_fft = rfft(chunk)
-                    # The fundamental frequency of a chunk of size L is exactly at index 1
                     chunk_phases.append(np.angle(chunk_fft[1]))
                 
                 # Phase Locking Value calculation
@@ -97,8 +98,6 @@ def analyze_cycles(data, min_len=10, max_len=300):
                 stability = 0.0
             
             # --- End of Dataset Phase Extraction ---
-            # To project accurately, we need the "current" phase of the last available cycle bar
-            # as outlined in Step 2 of the whitepaper, not the average phase over the whole series.
             last_chunk = data.values[-length:]
             last_chunk_fft = rfft(last_chunk)
             current_phase = np.angle(last_chunk_fft[1])
@@ -111,29 +110,33 @@ def analyze_cycles(data, min_len=10, max_len=300):
                 "Amp": round(amp, 2),
                 "Strg": round(strength, 4),
                 "Stab": round(stability, 2),
-                "Phase": current_phase # Saved for projection math
+                "Phase": current_phase 
             })
             
     if not cycles:
         return pd.DataFrame()
     
     cycles_df = pd.DataFrame(cycles)
-    
-    # Remove duplicates (group by length, take the one with highest stability/amplitude)
     cycles_df = cycles_df.loc[cycles_df.groupby("Len")["Stab"].idxmax()]
     
-    # Filter by Genuine % (Stability > 0.49) as requested in Whitepaper Step 3
-    valid_cycles = cycles_df[cycles_df["Stab"] > 0.49].copy()
+    # Filter by user-defined Genuine % (Slider)
+    valid_cycles = cycles_df[cycles_df["Stab"] >= st_threshold].copy()
     
-    # Rank by Strength (Dominant driving force per bar) as requested in Whitepaper Step 4
+    # FALLBACK: If nothing passes the threshold, grab the 5 most stable ones
+    if valid_cycles.empty:
+        st.warning(f"No cycles passed the {st_threshold*100}% threshold. Displaying the top 5 most stable cycles instead.")
+        valid_cycles = cycles_df.sort_values(by="Stab", ascending=False).head(5).copy()
+    
+    # Rank by Strength (Dominant driving force per bar)
     valid_cycles = valid_cycles.sort_values(by="Strg", ascending=False).reset_index(drop=True)
     
     return valid_cycles
 
 analyzed_cycles = analyze_cycles(df["Detrended"])
 
+# Safety catch just in case the fallback also fails (e.g., severe lack of data)
 if analyzed_cycles.empty:
-    st.warning("No significant cycles passed the > 49% Stability (Genuine) threshold.")
+    st.error("Not enough data to calculate any cycles. Try expanding your date range.")
     st.stop()
 
 # Add UI Checkbox column (Default top 3 selected)
