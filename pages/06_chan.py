@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy.fft import rfft, rfftfreq
+from scipy.ndimage import gaussian_filter1d
 import statsmodels.api as sm
 
 # ---------------------------------------------------------
@@ -239,11 +240,16 @@ with col1:
     # --- 2. Cycle Spectrum Subchart ---
     fig_spectrum = go.Figure()
 
+    # Apply Gaussian smoothing to the spectrum to match the screenshot's "mountain" look
+    smoothed_amps = gaussian_filter1d(full_spectrum_df["Amp"], sigma=3)
+
     # Fill Area for the full spectrum
     fig_spectrum.add_trace(go.Scatter(
-        x=full_spectrum_df["Len"], y=full_spectrum_df["Amp"],
-        fill='tozeroy', mode='lines',
-        line=dict(color='#8C9EBA', width=1),
+        x=full_spectrum_df["Len"], 
+        y=smoothed_amps,
+        fill='tozeroy', 
+        mode='lines',
+        line=dict(color='#2B4A6F', width=1.5),
         fillcolor='rgba(140, 158, 186, 0.4)',
         name='Full Spectrum'
     ))
@@ -252,8 +258,10 @@ with col1:
     bullish_peaks = analyzed_cycles[analyzed_cycles["Bullish"] == True]
     if not bullish_peaks.empty:
         fig_spectrum.add_trace(go.Scatter(
-            x=bullish_peaks["Len"], y=bullish_peaks["Amp"],
-            mode='markers', name='Bullish Cycle',
+            x=bullish_peaks["Len"], 
+            y=bullish_peaks["Amp"],
+            mode='markers', 
+            name='Bullish Cycle',
             marker=dict(symbol='triangle-up', color='#00C853', size=12, line=dict(width=1, color='darkgreen'))
         ))
 
@@ -261,20 +269,21 @@ with col1:
     bearish_peaks = analyzed_cycles[analyzed_cycles["Bullish"] == False]
     if not bearish_peaks.empty:
         fig_spectrum.add_trace(go.Scatter(
-            x=bearish_peaks["Len"], y=bearish_peaks["Amp"],
-            mode='markers', name='Bearish Cycle',
+            x=bearish_peaks["Len"], 
+            y=bearish_peaks["Amp"],
+            mode='markers', 
+            name='Bearish Cycle',
             marker=dict(symbol='triangle-down', color='#D32F2F', size=12, line=dict(width=1, color='darkred'))
         ))
 
     fig_spectrum.update_layout(
         title="Cycle Spectrum Periodogram",
-        xaxis_title="Cycle Length (Bars)", yaxis_title="Amplitude",
-        template="plotly_white", height=300,
-        margin=dict(l=20, r=20, t=40, b=20)
+        xaxis_title="Cycle Length (Bars)", 
+        yaxis_title="Amplitude",
+        template="plotly_white", 
+        height=350,
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(range=[0, min(450, full_spectrum_df["Len"].max())]) # Cap X-axis for readability
     )
-    # Highlight the stability filter cutoff line visually
-    threshold_line = analyzed_cycles["Amp"].min() if not analyzed_cycles.empty else 0
-    if threshold_line > 0:
-        fig_spectrum.add_hline(y=threshold_line, line_width=1, line_dash="dash", line_color="rgba(255, 0, 0, 0.5)")
-
+    
     st.plotly_chart(fig_spectrum, use_container_width=True)
