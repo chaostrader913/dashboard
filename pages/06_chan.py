@@ -51,7 +51,7 @@ if df.empty:
     st.stop()
 
 # Detrending using Hodrick-Prescott (HP) filter
-cycle_comp, trend_comp = sm.tsa.filters.hpfilter(df["Price"], lamb=14400)
+cycle_comp, trend_comp = sm.tsa.filters.hpfilter(df["Price"], lamb=1e10)
 df["Detrended"] = cycle_comp
 
 # ---------------------------------------------------------
