@@ -65,7 +65,6 @@ def analyze_cycles(data, min_len=10, max_len=400):
     lengths = np.arange(min_len, max_len + 1)
     
     # --- Step 2: Full Spectrum DFT (Goertzel Proxy) ---
-    # Calculate exact amplitude for EVERY integer length for a smooth, continuous curve
     for L in lengths:
         omega = 2 * np.pi / L
         # Single-bin DFT calculation
@@ -86,12 +85,11 @@ def analyze_cycles(data, min_len=10, max_len=400):
         amp = spectrum_amps[idx]
         
         if length > actual_max_len:
-            continue # Skip if cycle is too long to statistically validate in this dataset
+            continue
             
         omega = 2 * np.pi / length
         
         # --- End of Dataset Phase Extraction ---
-        # Get the localized phase of the most recent cycle window for accurate projection
         last_chunk = data.values[-length:]
         t_last = np.arange(length)
         last_dft = (2 / length) * np.sum(last_chunk * np.exp(-1j * omega * t_last))
@@ -107,13 +105,13 @@ def analyze_cycles(data, min_len=10, max_len=400):
                 chunk_dft = (2 / length) * np.sum(chunk * np.exp(-1j * omega * t_chunk))
                 chunk_phases.append(np.angle(chunk_dft))
             
-            # Phase Locking Value (Proxy for Bartels Test)
+            # Phase Locking Value
             plv = np.abs(np.sum(np.exp(1j * np.array(chunk_phases)))) / n_chunks
             stability = plv
         else:
             stability = 0.0
             
-        # Determine Direction (Bullish/Bearish based on the next bar's trajectory)
+        # Determine Direction (Bullish/Bearish based on next bar's trajectory)
         curr_val = amp * np.cos(current_phase)
         next_val = amp * np.cos(omega * 1 + current_phase)
         is_bullish = next_val > curr_val
@@ -138,13 +136,13 @@ def analyze_cycles(data, min_len=10, max_len=400):
     # Filter by user-defined Genuine %
     valid_cycles = cycles_df[cycles_df["Stab"] >= st_threshold].copy()
     
-    # Fallback to top 5 if the stability threshold is too strict for current data
+    # Fallback to top 5 if the stability threshold is too strict
     if valid_cycles.empty:
         st.warning(f"No cycles passed the {st_threshold*100}% threshold. Displaying the top 5 most stable cycles instead.")
         valid_cycles = cycles_df.sort_values(by="Stab", ascending=False).head(5).copy()
     
-    # Rank by Strength (Dominant driving force per bar)
-    valid_cycles = valid_cycles.sort_values(by="Strg", ascending=False).reset_index(drop=True)
+    # --- Rank by Stab by default ---
+    valid_cycles = valid_cycles.sort_values(by="Stab", ascending=False).reset_index(drop=True)
     
     return valid_cycles, full_spectrum_df
 
@@ -166,14 +164,15 @@ col1, col2 = st.columns([3, 1])
 with col2:
     st.subheader("Cycle Spectrum Data")
     
-    # Style the DataFrame to color 'Len' Green or Red based on trend direction
-    def highlight_len_col(styled_df):
-        styles = pd.DataFrame('', index=styled_df.index, columns=styled_df.columns)
-        styles['Len'] = np.where(styled_df['Bullish'], 'color: #00C853; font-weight: bold;', 'color: #D32F2F; font-weight: bold;')
-        return styles
+    # Fixed row-by-row styling function for Streamlit data_editor compatibility
+    def color_len_column(row):
+        color = '#00C853' if row['Bullish'] else '#D32F2F'
+        return [f'color: {color}; font-weight: bold;' if col == 'Len' else '' for col in row.index]
 
     display_cols = ["Select", "Len", "Amp", "Strg", "Stab", "Bullish"]
-    styled_table = analyzed_cycles[display_cols].style.apply(highlight_len_col, axis=None)
+    
+    # Apply styling using axis=1 (row-wise)
+    styled_table = analyzed_cycles[display_cols].style.apply(color_len_column, axis=1)
 
     edited_cycles = st.data_editor(
         styled_table,
@@ -200,12 +199,10 @@ for _, row in active_cycles.iterrows():
     amp = row["Amp"]
     phase = row["Phase"] 
     omega = 2 * np.pi / length
-    # Align the phase correctly with the end of our current data
     x_range = np.arange(total_bars) - (len(df) - 1) 
     wave = amp * np.cos(omega * x_range + phase)
     composite_wave += wave
 
-# Scale the composite wave to visually fit underneath the price chart
 if len(active_cycles) > 0:
     comp_min, comp_max = composite_wave.min(), composite_wave.max()
     price_min, price_max = df["Price"].min(), df["Price"].max()
@@ -217,7 +214,6 @@ if len(active_cycles) > 0:
 else:
     composite_wave_scaled = np.full(total_bars, np.nan)
 
-# Future dates calculation
 last_date = df["Date"].iloc[-1]
 future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=future_bars)
 all_dates = pd.concat([df["Date"], pd.Series(future_dates)]).reset_index(drop=True)
@@ -252,7 +248,6 @@ with col1:
     # --- 2. Cycle Spectrum Subchart ---
     fig_spectrum = go.Figure()
 
-    # Direct plot of the high-resolution DFT amplitudes to form the "mountains"
     fig_spectrum.add_trace(go.Scatter(
         x=full_spectrum_df["Len"], 
         y=full_spectrum_df["Amp"],
@@ -263,7 +258,6 @@ with col1:
         name='Full Spectrum'
     ))
 
-    # Overlay Bullish peaks
     bullish_peaks = analyzed_cycles[analyzed_cycles["Bullish"] == True]
     if not bullish_peaks.empty:
         fig_spectrum.add_trace(go.Scatter(
@@ -272,7 +266,6 @@ with col1:
             marker=dict(symbol='triangle-up', color='#00C853', size=12, line=dict(width=1, color='darkgreen'))
         ))
 
-    # Overlay Bearish peaks
     bearish_peaks = analyzed_cycles[analyzed_cycles["Bullish"] == False]
     if not bearish_peaks.empty:
         fig_spectrum.add_trace(go.Scatter(
@@ -288,7 +281,7 @@ with col1:
         template="plotly_white", 
         height=350,
         margin=dict(l=20, r=20, t=40, b=20),
-        xaxis=dict(range=[0, 420]) # Lock X-axis to keep chart focused on active cycles
+        xaxis=dict(range=[0, 420]) 
     )
     
     st.plotly_chart(fig_spectrum, use_container_width=True)
