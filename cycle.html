@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cycle Scanner Dashboard</title>
+    <!-- Tailwind CSS for Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Plotly.js for Charts -->
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .pill-green { background-color: #4CAF50; color: white; font-weight: bold; border-radius: 4px; padding: 2px 8px; text-align: center; display: inline-block; width: 60px;}
+        .pill-red { background-color: #F44336; color: white; font-weight: bold; border-radius: 4px; padding: 2px 8px; text-align: center; display: inline-block; width: 60px;}
+        .table-container { height: calc(100vh - 120px); overflow-y: auto; }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+        th { position: sticky; top: 0; background: #f8fafc; z-index: 10; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body class="h-screen flex flex-col p-4 text-slate-800 overflow-hidden">
+
+    <!-- Toast Notification (Replaces window.alert) -->
+    <div id="toast" class="fixed top-4 right-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-xl transform transition-transform duration-300 translate-x-full z-50 flex items-center gap-3">
+        <i data-lucide="alert-circle" class="w-5 h-5 shrink-0"></i>
+        <span id="toastMessage" class="text-sm font-medium"></span>
+        <button onclick="hideToast()" class="ml-2 hover:bg-red-700 p-1 rounded transition-colors">
+            <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+    </div>
+
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-4 px-2">
+        <h1 class="text-2xl font-extrabold text-slate-800 flex items-center gap-2">
+            <i data-lucide="activity" class="text-blue-600"></i> Cycle Scanner Dashboard
+        </h1>
+        <div class="flex items-center gap-3 bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200">
+            
+            <!-- Web Data (YF) -->
+            <div class="flex items-center gap-2">
+                <input type="text" id="tickerInput" value="CL=F" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase" placeholder="Ticker">
+                <button id="loadBtn" onclick="runScanner()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-md text-sm font-semibold transition-colors flex items-center gap-1" title="Load from Yahoo Finance">
+                    <i data-lucide="download" class="w-4 h-4"></i> Web
+                </button>
+            </div>
+            
+            <div class="h-6 w-px bg-slate-300 mx-1"></div>
+            
+            <!-- Local Data (CSV Upload) -->
+            <label for="csvUpload" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-sm font-semibold transition-colors flex items-center gap-1 cursor-pointer" title="Upload Local CSV Data">
+                <i data-lucide="upload" class="w-4 h-4"></i> CSV
+            </label>
+            <input type="file" id="csvUpload" accept=".csv" class="hidden" onchange="handleFileUpload(event)">
+
+            <div class="h-6 w-px bg-slate-300 mx-1"></div>
+            
+            <!-- Threshold Slider -->
+            <div class="flex items-center gap-2">
+                <label class="text-sm font-semibold text-slate-600">Stability:</label>
+                <input type="range" id="thresholdSlider" min="0" max="1" step="0.01" value="0.40" class="w-24 cursor-pointer" onchange="updateThreshold(this.value)">
+                <span id="thresholdValue" class="text-sm font-bold text-blue-600 w-10 text-right">40%</span>
+            </div>
+            
+        </div>
+    </div>
+
+    <!-- Main Layout Grid -->
+    <div class="flex flex-1 gap-4 min-h-0">
+        <!-- Left Column: Charts -->
+        <div class="flex flex-col flex-1 gap-4 min-w-0">
+            <!-- Price & Composite Chart -->
+            <div class="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 p-2 relative">
+                <div id="mainChart" class="w-full h-full"></div>
+            </div>
+            
+            <!-- Spectrum Periodogram Chart -->
+            <div class="h-[35%] bg-white rounded-xl shadow-sm border border-slate-200 p-2 relative">
+                <div id="spectrumChart" class="w-full h-full"></div>
+            </div>
+        </div>
+
+        <!-- Right Column: Data Table -->
+        <div class="w-96 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col">
+            <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-xl">
+                <h3 class="text-base font-bold text-slate-700">Cycle Spectrum Data</h3>
+                <span class="text-xs text-slate-500 font-medium">Ranked by Stability</span>
+            </div>
+            <div class="table-container p-2">
+                <table class="w-full text-sm text-right">
+                    <thead>
+                        <tr class="text-slate-500 font-semibold border-b border-slate-200">
+                            <th class="py-2 pl-2 text-center">✔️</th>
+                            <th class="py-2">Len</th>
+                            <th class="py-2">Amp</th>
+                            <th class="py-2">Strg</th>
+                            <th class="py-2 pr-2">Stab</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="text-slate-700 divide-y divide-slate-100">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Icons
+        lucide.createIcons();
+
+        // Global State
+        let rawData = [];
+        let dates = [];
+        let detrendedData = [];
+        let analyzedCycles = [];
+        let spectrumData = { lengths: [], amps: [] };
+        let activeCycleLengths = new Set();
+        let currentThreshold = 0.40;
+        let currentTicker = "CL=F";
+
+        // Toast Notification System
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMessage').innerText = message;
+            toast.classList.remove('translate-x-full');
+            setTimeout(hideToast, 6000);
+        }
+
+        function hideToast() {
+            document.getElementById('toast').classList.add('translate-x-full');
+        }
+
+        // --- DATA LOADERS ---
+
+        // 1A. Fetch Live Data from Yahoo Finance with Fallback Proxies
+        async function fetchYahooData(ticker) {
+            const url1 = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=3y&interval=1d`;
+            const url2 = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=3y&interval=1d`;
+            
+            // Multiple fallback proxies mapping directly to the 'raw' json output
+            const proxies = [
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(url1)}`,
+                `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url1)}`,
+                `https://corsproxy.io/?${encodeURIComponent(url1)}`,
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(url2)}`,
+                `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url2)}`
+            ];
+
+            let yfData = null;
+
+            // Try each proxy until one succeeds and returns proper YF JSON structure
+            for (const proxyUrl of proxies) {
+                try {
+                    const response = await fetch(proxyUrl, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    
+                    if (!response.ok) continue;
+                    
+                    const data = await response.json();
+                    
+                    if (data && data.chart && data.chart.result && data.chart.result.length > 0) {
+                        yfData = data;
+                        break; // Success!
+                    }
+                } catch (e) {
+                    console.warn("Proxy attempt failed:", proxyUrl);
+                }
+            }
+            
+            if (!yfData) {
+                throw new Error("Unable to fetch data. All public CORS proxies failed or ticker is invalid.");
+            }
+
+            const result = yfData.chart.result[0];
+            const timestamps = result.timestamp;
+            const closes = result.indicators.quote[0].close;
+            
+            let prices = [];
+            let dts = [];
+            
+            for (let i = 0; i < timestamps.length; i++) {
+                if (closes[i] !== null && closes[i] !== undefined) {
+                    prices.push(closes[i]);
+                    dts.push(new Date(timestamps[i] * 1000).toISOString().split('T')[0]);
+                }
+            }
+            
+            return { prices, dates: dts };
+        }
+
+        // 1B. Parse uploaded CSV Data
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                processCSV(text, file.name);
+            };
+            reader.readAsText(file);
+        }
+
+        function processCSV(csvText, fileName) {
+            const lines = csvText.split('\n').map(l => l.trim()).filter(l => l);
+            if (lines.length < 2) {
+                showToast("Invalid or empty CSV.");
+                return;
+            }
+
+            // Extract headers
+            const headers = lines[0].split(',').map(h => h.trim());
+            
+            // Find specific column indices (Support English and Chinese "收盘")
+            let dateIdx = headers.findIndex(h => h.toLowerCase().includes('date'));
+            let closeIdx = headers.findIndex(h => h.includes('收盘') || h.toLowerCase().includes('close'));
+
+            // Fallbacks
+            if (dateIdx === -1) dateIdx = 0; 
+            if (closeIdx === -1) closeIdx = headers.length - 1; 
+
+            let parsedData = [];
+            for (let i = 1; i < lines.length; i++) {
+                // Handle basic CSV splitting
+                const cols = lines[i].split(',').map(c => c.trim());
+                if (cols.length > closeIdx) {
+                    const dateStr = cols[dateIdx];
+                    const priceStr = cols[closeIdx];
+                    const price = parseFloat(priceStr);
+                    
+                    if (!isNaN(price) && dateStr) {
+                        parsedData.push({ date: dateStr, price: price });
+                    }
+                }
+            }
+
+            // The provided CSV is reverse chronological (newest first).
+            // We need to sort ascending so oldest is first.
+            parsedData.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            rawData = parsedData.map(d => d.price);
+            dates = parsedData.map(d => d.date);
+
+            if (rawData.length < 50) {
+                showToast("Not enough valid data rows found in the CSV. Need at least 50 bars.");
+                return;
+            }
+
+            // Format Ticker Name based on file name
+            currentTicker = fileName.split('.')[0];
+            document.getElementById('tickerInput').value = currentTicker;
+
+            // Run Analysis
+            detrendedData = detrendData(rawData);
+            calculateCycles();
+            updateUI();
+        }
+
+        // --- MATHEMATICS & ALGORITHMS ---
+
+        // 2. Detrending (Linear Regression acts as proxy for HP Filter to preserve lengths)
+        function detrendData(data) {
+            const n = data.length;
+            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+            for(let i=0; i<n; i++) {
+                sumX += i;
+                sumY += data[i];
+                sumXY += i * data[i];
+                sumXX += i * i;
+            }
+            const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+            const intercept = (sumY - slope * sumX) / n;
+
+            const detrended = new Array(n);
+            for(let i=0; i<n; i++) {
+                detrended[i] = data[i] - (slope * i + intercept);
+            }
+            return detrended;
+        }
+
+        // 3. Cycle Detection (High-Resolution DFT / Goertzel Proxy)
+        function calculateCycles() {
+            const data = detrendedData;
+            const n = data.length;
+            const minLen = 10;
+            const maxLen = Math.min(400, Math.floor(n / 2)); 
+            
+            spectrumData.lengths = [];
+            spectrumData.amps = [];
+            let cycles = [];
+
+            // Calculate spectrum amplitude for every integer length
+            for (let L = minLen; L <= maxLen; L++) {
+                let omega = 2 * Math.PI / L;
+                let sumR = 0, sumI = 0;
+                
+                for (let t = 0; t < n; t++) {
+                    sumR += data[t] * Math.cos(-omega * t);
+                    sumI += data[t] * Math.sin(-omega * t);
+                }
+                
+                let amp = (2 / n) * Math.sqrt(sumR*sumR + sumI*sumI);
+                spectrumData.lengths.push(L);
+                spectrumData.amps.push(amp);
+            }
+
+            // Find Peaks in the spectrum
+            const actualMaxLen = Math.floor(n / 3); 
+            for (let i = 1; i < spectrumData.amps.length - 1; i++) {
+                if (spectrumData.amps[i] > spectrumData.amps[i - 1] && spectrumData.amps[i] > spectrumData.amps[i + 1]) {
+                    
+                    let L = spectrumData.lengths[i];
+                    if (L > actualMaxLen) continue; 
+                    
+                    let amp = spectrumData.amps[i];
+                    let omega = 2 * Math.PI / L;
+
+                    // Phase Extraction (Using only the Last Chunk of length L)
+                    let lastChunk = data.slice(-L);
+                    let lR = 0, lI = 0;
+                    for (let t = 0; t < L; t++) {
+                        lR += lastChunk[t] * Math.cos(-omega * t);
+                        lI += lastChunk[t] * Math.sin(-omega * t);
+                    }
+                    let currentPhase = Math.atan2(lI, lR);
+
+                    // Stability (Phase Locking Value / Bartels proxy over all chunks)
+                    let nChunks = Math.floor(n / L);
+                    let stability = 0;
+                    if (nChunks >= 3) {
+                        let sumPhaseR = 0, sumPhaseI = 0;
+                        for (let c = 0; c < nChunks; c++) {
+                            let chunk = data.slice(n - (c+1)*L, n - c*L);
+                            let cR = 0, cI = 0;
+                            for (let t = 0; t < L; t++) {
+                                cR += chunk[t] * Math.cos(-omega * t);
+                                cI += chunk[t] * Math.sin(-omega * t);
+                            }
+                            let phase = Math.atan2(cI, cR);
+                            sumPhaseR += Math.cos(phase);
+                            sumPhaseI += Math.sin(phase);
+                        }
+                        stability = Math.sqrt(sumPhaseR*sumPhaseR + sumPhaseI*sumPhaseI) / nChunks;
+                    }
+
+                    // Bullish/Bearish Direction of the cycle right now
+                    let currVal = amp * Math.cos(currentPhase);
+                    let nextVal = amp * Math.cos(omega * 1 + currentPhase);
+                    let isBullish = nextVal > currVal;
+
+                    cycles.push({
+                        len: L,
+                        amp: amp,
+                        strg: amp / L,
+                        stab: stability,
+                        phase: currentPhase,
+                        bullish: isBullish
+                    });
+                }
+            }
+
+            // Filter out unstable cycles & Sort
+            analyzedCycles = cycles.filter(c => c.stab >= currentThreshold);
+            if (analyzedCycles.length === 0) {
+                // Fallback: Display top 5 if threshold is too strict
+                analyzedCycles = cycles.sort((a,b) => b.stab - a.stab).slice(0, 5);
+            } else {
+                analyzedCycles.sort((a,b) => b.stab - a.stab);
+            }
+
+            // By default, select the top 2 most stable cycles
+            activeCycleLengths.clear();
+            for(let i=0; i<Math.min(2, analyzedCycles.length); i++){
+                activeCycleLengths.add(analyzedCycles[i].len);
+            }
+        }
+
+        // --- UI & RENDERERS ---
+
+        function updateUI() {
+            renderTable();
+            renderCharts();
+        }
+
+        function toggleCycle(len) {
+            if (activeCycleLengths.has(len)) {
+                activeCycleLengths.delete(len);
+            } else {
+                activeCycleLengths.add(len);
+            }
+            renderCharts(); 
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+            
+            analyzedCycles.forEach(c => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-blue-50 transition-colors";
+                
+                const isChecked = activeCycleLengths.has(c.len) ? 'checked' : '';
+                const pillClass = c.bullish ? 'pill-green' : 'pill-red';
+                
+                tr.innerHTML = `
+                    <td class="py-2 pl-2 text-center">
+                        <input type="checkbox" ${isChecked} onchange="toggleCycle(${c.len})" class="w-4 h-4 text-blue-600 rounded border-gray-300 cursor-pointer focus:ring-blue-500">
+                    </td>
+                    <td class="py-2"><span class="${pillClass}">${c.len}</span></td>
+                    <td class="py-2 font-medium">${c.amp.toFixed(2)}</td>
+                    <td class="py-2 text-slate-500">${c.strg.toFixed(4)}</td>
+                    <td class="py-2 pr-2 font-medium">${c.stab.toFixed(2)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderCharts() {
+            const n = rawData.length;
+            const futureBars = 100;
+            const totalBars = n + futureBars;
+
+            // Generate Composite Wave
+            let compositeWave = new Array(totalBars).fill(0);
+            let active = analyzedCycles.filter(c => activeCycleLengths.has(c.len));
+            
+            for (let i = 0; i < totalBars; i++) {
+                let x = i - (n - 1); 
+                active.forEach(c => {
+                    let omega = 2 * Math.PI / c.len;
+                    compositeWave[i] += c.amp * Math.cos(omega * x + c.phase);
+                });
+            }
+
+            // Scale Composite Wave to ~85% of price chart amplitude
+            let pMin = Math.min(...rawData);
+            let pMax = Math.max(...rawData);
+            let cMin = Math.min(...compositeWave);
+            let cMax = Math.max(...compositeWave);
+            
+            let compositeScaled = [];
+            if (active.length > 0 && cMax !== cMin) {
+                let pMid = (pMax + pMin) / 2;
+                let cMid = (cMax + cMin) / 2;
+                let scaleFactor = (pMax - pMin) * 0.85 / (cMax - cMin);
+                compositeScaled = compositeWave.map(v => ((v - cMid) * scaleFactor) + pMid);
+            } else {
+                compositeScaled = new Array(totalBars).fill((pMax + pMin) / 2);
+            }
+
+            // Extend Dates on X Axis
+            let allDates = [...dates];
+            let lastDate = new Date(dates[dates.length - 1]);
+            for (let i = 1; i <= futureBars; i++) {
+                let d = new Date(lastDate);
+                d.setDate(d.getDate() + i);
+                allDates.push(d.toISOString().split('T')[0]);
+            }
+
+            // --- 1. MAIN PRICE CHART ---
+            let tracePrice = {
+                x: dates, y: rawData, type: 'scatter', mode: 'lines',
+                line: {color: '#2B4A6F', width: 1.5}, name: 'Price'
+            };
+            let traceComp = {
+                x: allDates, y: compositeScaled, type: 'scatter', mode: 'lines',
+                line: {color: '#FF00FF', width: 2, shape: 'spline'}, name: 'Composite Projection'
+            };
+
+            let layoutMain = {
+                title: {text: `${currentTicker} Price and Composite Cycle`, font:{size: 14}, x: 0.02},
+                margin: { l: 40, r: 20, t: 40, b: 20 },
+                legend: { orientation: "h", y: 1.1, x: 1, xanchor: 'right' },
+                shapes: [{
+                    type: 'line', x0: dates[dates.length-1], x1: dates[dates.length-1],
+                    y0: 0, y1: 1, yref: 'paper',
+                    line: { color: 'grey', width: 1, dash: 'dash' }
+                }],
+                plot_bgcolor: 'white',
+                paper_bgcolor: 'white',
+                xaxis: { showgrid: true, gridcolor: '#f1f5f9' },
+                yaxis: { showgrid: true, gridcolor: '#f1f5f9' }
+            };
+
+            Plotly.react('mainChart', [tracePrice, traceComp], layoutMain, {displayModeBar: false, responsive: true});
+
+            // --- 2. SPECTRUM CHART ---
+            let traceSpecFill = {
+                x: spectrumData.lengths, y: spectrumData.amps,
+                fill: 'tozeroy', type: 'scatter', mode: 'lines',
+                line: {color: '#2B4A6F', width: 1},
+                fillcolor: 'rgba(140, 158, 186, 0.4)',
+                name: 'Full Spectrum', hoverinfo: 'none'
+            };
+
+            let bullishX=[], bullishY=[], bearishX=[], bearishY=[];
+            analyzedCycles.forEach(c => {
+                if(c.bullish) { bullishX.push(c.len); bullishY.push(c.amp); }
+                else { bearishX.push(c.len); bearishY.push(c.amp); }
+            });
+
+            let traceBull = {
+                x: bullishX, y: bullishY, type: 'scatter', mode: 'markers',
+                marker: {symbol: 'triangle-up', color: '#4CAF50', size: 12, line:{color:'darkgreen', width:1}},
+                name: 'Bullish Cycle'
+            };
+            
+            let traceBear = {
+                x: bearishX, y: bearishY, type: 'scatter', mode: 'markers',
+                marker: {symbol: 'triangle-down', color: '#F44336', size: 12, line:{color:'darkred', width:1}},
+                name: 'Bearish Cycle'
+            };
+
+            let layoutSpec = {
+                title: {text: 'Cycle Spectrum Periodogram', font:{size: 14}, x: 0.02},
+                margin: { l: 40, r: 20, t: 40, b: 30 },
+                legend: { orientation: "v", y: 1, x: 1, xanchor: 'right' },
+                plot_bgcolor: 'white',
+                paper_bgcolor: 'white',
+                xaxis: { title: 'Cycle Length (Bars)', range: [0, 420], showgrid: true, gridcolor: '#f1f5f9' },
+                yaxis: { title: 'Amplitude', showgrid: true, gridcolor: '#f1f5f9' }
+            };
+
+            Plotly.react('spectrumChart', [traceSpecFill, traceBull, traceBear], layoutSpec, {displayModeBar: false, responsive: true});
+        }
+
+        // Action Handlers
+        function updateThreshold(val) {
+            currentThreshold = parseFloat(val);
+            document.getElementById('thresholdValue').innerText = Math.round(currentThreshold * 100) + '%';
+            if (rawData.length > 0) {
+                calculateCycles();
+                updateUI();
+            }
+        }
+
+        async function runScanner() {
+            const btn = document.getElementById('loadBtn');
+            const tickerInput = document.getElementById('tickerInput').value.trim().toUpperCase();
+            
+            if (!tickerInput) return;
+
+            currentTicker = tickerInput;
+            btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i>`;
+            btn.disabled = true;
+            lucide.createIcons();
+
+            try {
+                let dataObj = await fetchYahooData(currentTicker);
+                rawData = dataObj.prices;
+                dates = dataObj.dates;
+                
+                if (rawData.length < 100) {
+                    showToast(`Not enough historical data available for ${currentTicker}.`);
+                } else {
+                    detrendedData = detrendData(rawData);
+                    calculateCycles();
+                    updateUI();
+                }
+            } catch (err) {
+                console.error(err);
+                showToast(`Unable to fetch Web Data for ${currentTicker}. Public proxies may be blocked. Please use the CSV upload button instead.`);
+            } finally {
+                btn.innerHTML = `<i data-lucide="download" class="w-4 h-4"></i> Web`;
+                btn.disabled = false;
+                lucide.createIcons();
+            }
+        }
+
+        // Initialize UI without triggering faulty fetch
+        window.onload = () => {
+            showToast("Please enter a ticker and click Web, or upload your CL1.xlsx CSV file.");
+        };
+
+    </script>
+</body>
+</html>
