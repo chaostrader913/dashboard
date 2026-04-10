@@ -31,16 +31,21 @@ def fetch_data(t, start, end):
     
     # Handle multi-index columns if present in newer yfinance versions
     if isinstance(df.columns, pd.MultiIndex):
-        df = df['Close'].to_frame()
+        # df['Close'] is ALREADY a DataFrame. We isolate the first column 
+        # (the ticker) to avoid length mismatch errors.
+        df = df['Close'].iloc[:, [0]].copy() 
         df.columns = ['Close']
     else:
         df = df[['Close']]
         
     df = df.dropna()
     df.reset_index(inplace=True)
-    df.rename(columns={'Close': 'Price'}, inplace=True)
+    
+    # yfinance sometimes names the reset index "Date" or "index". 
+    # This safely handles renaming it to our standard.
+    df.rename(columns={'Close': 'Price', 'index': 'Date'}, inplace=True)
+    
     return df
-
 df = fetch_data(ticker, start_date, end_date)
 
 if df.empty:
