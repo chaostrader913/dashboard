@@ -3,196 +3,236 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from scipy.fft import rfft, rfftfreq
+import statsmodels.api as sm
 
-# 设置 Streamlit 页面配置
-st.set_page_config(page_title="缠论自动化分析系统", layout="wide")
+# ---------------------------------------------------------
+# Page Configuration
+# ---------------------------------------------------------
+st.set_page_config(layout="wide", page_title="Cycle Scanner")
+st.title("Cycle Scanner Dashboard")
 
-class ChanAnalyzer:
-    def __init__(self, symbol, period='2y', interval='1d'):
-        self.symbol = symbol
-        self.period = period
-        self.interval = interval
-        self.df = None
-        self.standardized_df = None
-        self.bi_list = []
-        self.zhongshus = []
-        self.waves = [] 
-        self.signals = [] 
+# ---------------------------------------------------------
+# 1. Data Fetching & Preprocessing
+# ---------------------------------------------------------
+col_input1, col_input2, col_input3 = st.columns(3)
+with col_input1:
+    ticker = st.text_input("Ticker Symbol (yfinance)", value="^GSPC")
+with col_input2:
+    start_date = st.date_input("Start Date", pd.to_datetime("2020-01-01"))
+with col_input3:
+    end_date = st.date_input("End Date", pd.to_datetime("today"))
 
-    def fetch_data(self):
-        """获取真实市场数据并计算MACD"""
-        ticker = yf.Ticker(self.symbol)
-        self.df = ticker.history(period=self.period, interval=self.interval)
-        if self.df.empty:
-            return None
-        self.df.reset_index(inplace=True)
+@st.cache_data(ttl=3600)
+def fetch_data(t, start, end):
+    df = yf.download(t, start=start, end=end)
+    if df.empty:
+        return pd.DataFrame()
+    
+    # Handle multi-index columns if present in newer yfinance versions
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df['Close'].to_frame()
+        df.columns = ['Close']
+    else:
+        df = df[['Close']]
         
-        # 计算 MACD
-        exp1 = self.df['Close'].ewm(span=12, adjust=False).mean()
-        exp2 = self.df['Close'].ewm(span=26, adjust=False).mean()
-        self.df['MACD_DIF'] = exp1 - exp2
-        self.df['MACD_DEA'] = self.df['MACD_DIF'].ewm(span=9, adjust=False).mean()
-        self.df['MACD_HIST'] = (self.df['MACD_DIF'] - self.df['MACD_DEA']) * 2
-        return self.df
+    df = df.dropna()
+    df.reset_index(inplace=True)
+    df.rename(columns={'Close': 'Price'}, inplace=True)
+    return df
 
-    def process_inclusion(self):
-        """K线包含处理"""
-        if self.df is None or self.df.empty: return
-        data = self.df.copy()
-        new_data = []
-        curr = data.iloc[0].to_dict()
-        direction = 1 
-        for i in range(1, len(data)):
-            nxt = data.iloc[i].to_dict()
-            is_inclusion = (curr['High'] >= nxt['High'] and curr['Low'] <= nxt['Low']) or \
-                           (nxt['High'] >= curr['High'] and nxt['Low'] <= curr['Low'])
-            if is_inclusion:
-                if direction == 1: 
-                    curr['High'] = max(curr['High'], nxt['High'])
-                    curr['Low'] = max(curr['Low'], nxt['Low'])
-                else: 
-                    curr['High'] = min(curr['High'], nxt['High'])
-                    curr['Low'] = min(curr['Low'], nxt['Low'])
+df = fetch_data(ticker, start_date, end_date)
+
+if df.empty:
+    st.error("No data found for the given ticker and dates.")
+    st.stop()
+
+# Step 1: Detrending using Hodrick-Prescott (HP) filter
+# lambda = 14400 is standard for daily frequency data
+cycle_comp, trend_comp = sm.tsa.filters.hpfilter(df["Price"], lamb=14400)
+df["Detrended"] = cycle_comp
+
+# ---------------------------------------------------------
+# 2, 3, 4. Cycle Detection, Validation & Ranking
+# ---------------------------------------------------------
+def analyze_cycles(data, min_len=10, max_len=300):
+    n = len(data)
+    yf_val = rfft(data.values)
+    xf_val = rfftfreq(n, 1) # 1 bar frequency
+    
+    amplitudes = np.abs(yf_val) / n
+    
+    cycles = []
+    # Cap max_len to ensure we have at least 3 chunks for stability testing
+    actual_max_len = min(max_len, n // 3)
+    
+    for i in range(1, len(xf_val)):
+        freq = xf_val[i]
+        length = int(round(1 / freq))
+        
+        if min_len <= length <= actual_max_len:
+            amp = amplitudes[i]
+            
+            # --- Step 3: Cycle Validation (Stability / Genuine %) ---
+            # Proxy for Bartels Test using Phase Synchronization (Phase Locking Value)
+            # We split the data into chunks of size 'length' and measure phase consistency
+            n_chunks = n // length
+            if n_chunks >= 3:
+                chunk_phases = []
+                for c in range(n_chunks):
+                    chunk = data.values[c * length : (c + 1) * length]
+                    chunk_fft = rfft(chunk)
+                    # The fundamental frequency of a chunk of size L is exactly at index 1
+                    chunk_phases.append(np.angle(chunk_fft[1]))
+                
+                # Phase Locking Value calculation
+                plv = np.abs(np.sum(np.exp(1j * np.array(chunk_phases)))) / n_chunks
+                stability = plv
             else:
-                direction = 1 if nxt['High'] > curr['High'] else -1
-                new_data.append(curr)
-                curr = nxt
-        new_data.append(curr)
-        self.standardized_df = pd.DataFrame(new_data)
-        return self.standardized_df
-
-    def find_bi(self):
-        """识别笔 (Bi)"""
-        df = self.standardized_df
-        if df is None: return []
-        points = []
-        for i in range(1, len(df) - 1):
-            if df.iloc[i]['High'] > df.iloc[i-1]['High'] and df.iloc[i]['High'] > df.iloc[i+1]['High']:
-                points.append({'index': i, 'type': 'top', 'price': df.iloc[i]['High'], 
-                               'date': df.iloc[i]['Date'], 'macd': df.iloc[i]['MACD_DIF']})
-            elif df.iloc[i]['Low'] < df.iloc[i-1]['Low'] and df.iloc[i]['Low'] < df.iloc[i+1]['Low']:
-                points.append({'index': i, 'type': 'bottom', 'price': df.iloc[i]['Low'], 
-                               'date': df.iloc[i]['Date'], 'macd': df.iloc[i]['MACD_DIF']})
-        
-        valid_bi = []
-        for p in points:
-            if not valid_bi:
-                valid_bi.append(p)
-                continue
-            last = valid_bi[-1]
-            if p['type'] != last['type'] and (p['index'] - last['index']) >= 4:
-                valid_bi.append(p)
-            elif p['type'] == last['type']:
-                if (p['type'] == 'top' and p['price'] > last['price']) or \
-                   (p['type'] == 'bottom' and p['price'] < last['price']):
-                    valid_bi[-1] = p
-        self.bi_list = valid_bi
-        return valid_bi
-
-    def find_zhongshu(self):
-        """识别中枢"""
-        if len(self.bi_list) < 4: return []
-        zs_list = []
-        for i in range(len(self.bi_list) - 3):
-            b1_s, b1_e = self.bi_list[i]['price'], self.bi_list[i+1]['price']
-            b2_s, b2_e = self.bi_list[i+1]['price'], self.bi_list[i+2]['price']
-            b3_s, b3_e = self.bi_list[i+2]['price'], self.bi_list[i+3]['price']
-            h = min(max(b1_s, b1_e), max(b2_s, b2_e), max(b3_s, b3_e))
-            l = max(min(b1_s, b1_e), min(b2_s, b2_e), min(b3_s, b3_e))
-            if h > l:
-                zs_list.append({'start_date': self.bi_list[i]['date'], 'end_date': self.bi_list[i+3]['date'], 'high': h, 'low': l})
-        self.zhongshus = zs_list
-        return zs_list
-
-    def identify_signals(self):
-        """识别信号"""
-        if len(self.bi_list) < 5: return []
-        signals = []
-        for i in range(4, len(self.bi_list)):
-            curr = self.bi_list[i]
-            prev_same = self.bi_list[i-2]
-            # 一类
-            if curr['type'] == 'bottom' and prev_same['type'] == 'bottom':
-                if curr['price'] < prev_same['price'] and abs(curr['macd']) < abs(prev_same['macd']):
-                    signals.append({'date': curr['date'], 'price': curr['price'], 'type': 'B1', 'text': '一买'})
-            elif curr['type'] == 'top' and prev_same['type'] == 'top':
-                if curr['price'] > prev_same['price'] and abs(curr['macd']) < abs(prev_same['macd']):
-                    signals.append({'date': curr['date'], 'price': curr['price'], 'type': 'S1', 'text': '一卖'})
-            # 三类 (简化)
-            if self.zhongshus:
-                last_zs = self.zhongshus[-1]
-                if curr['type'] == 'bottom' and curr['price'] > last_zs['high'] and self.bi_list[i-1]['price'] > last_zs['high']:
-                    signals.append({'date': curr['date'], 'price': curr['price'], 'type': 'B3', 'text': '三买'})
-                elif curr['type'] == 'top' and curr['price'] < last_zs['low'] and self.bi_list[i-1]['price'] < last_zs['low']:
-                    signals.append({'date': curr['date'], 'price': curr['price'], 'type': 'S3', 'text': '三卖'})
-        self.signals = signals
-        return signals
-
-    def get_figure(self):
-        """返回 Plotly Figure 对象供 Streamlit 使用"""
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
-                           row_heights=[0.7, 0.3], subplot_titles=('价格走势 & 缠论标注', 'MACD 动能'))
-        
-        # K线
-        fig.add_trace(go.Candlestick(x=self.df['Date'], open=self.df['Open'], high=self.df['High'],
-                                     low=self.df['Low'], close=self.df['Close'], name='K线', opacity=0.4), row=1, col=1)
-        # 笔
-        bi_x = [p['date'] for p in self.bi_list]
-        bi_y = [p['price'] for p in self.bi_list]
-        fig.add_trace(go.Scatter(x=bi_x, y=bi_y, mode='lines+markers', name='笔', 
-                                 line=dict(color='yellow', width=1.5)), row=1, col=1)
-        # 中枢
-        for zs in self.zhongshus:
-            fig.add_shape(type="rect", x0=zs['start_date'], y0=zs['low'], x1=zs['end_date'], y1=zs['high'],
-                          line=dict(color="cyan", width=1), fillcolor="cyan", opacity=0.1, row=1, col=1)
-        # 信号
-        for sig in self.signals:
-            color = "red" if sig['type'].startswith('S') else "lime"
-            fig.add_trace(go.Scatter(x=[sig['date']], y=[sig['price']], mode='markers+text', 
-                                     name=sig['text'], text=[sig['text']], textposition="top center",
-                                     marker=dict(color=color, size=12, symbol="star")), row=1, col=1)
-        # MACD
-        fig.add_trace(go.Bar(x=self.df['Date'], y=self.df['MACD_HIST'], name='柱状图'), row=2, col=1)
-        
-        fig.update_layout(height=800, template='plotly_dark', xaxis_rangeslider_visible=False)
-        return fig
-
-# --- Streamlit UI 部分 ---
-st.sidebar.title("🔍 缠论参数设置")
-ticker_input = st.sidebar.text_input("请输入股票代码 (如: 3032.HK, AAPL, 0700.HK)", "3032.HK")
-time_period = st.sidebar.selectbox("时间范围", ["1y", "2y", "5y", "max"], index=1)
-chart_interval = st.sidebar.selectbox("K线周期", ["1d", "1wk", "1mo"], index=0)
-
-st.title(f"📊 {ticker_input} 自动化缠论分析")
-
-if st.sidebar.button("开始分析"):
-    with st.spinner('正在获取数据并计算结构...'):
-        analyzer = ChanAnalyzer(ticker_input, period=time_period, interval=chart_interval)
-        data = analyzer.fetch_data()
-        
-        if data is not None:
-            analyzer.process_inclusion()
-            analyzer.find_bi()
-            analyzer.find_zhongshu()
-            analyzer.identify_signals()
+                stability = 0.0
             
-            # 显示指标卡片
-            c1, c2, c3 = st.columns(3)
-            c1.metric("当前价格", f"{data.iloc[-1]['Close']:.2f}")
-            c2.metric("识别笔数", len(analyzer.bi_list))
-            c3.metric("识别中枢", len(analyzer.zhongshus))
+            # --- End of Dataset Phase Extraction ---
+            # To project accurately, we need the "current" phase of the last available cycle bar
+            # as outlined in Step 2 of the whitepaper, not the average phase over the whole series.
+            last_chunk = data.values[-length:]
+            last_chunk_fft = rfft(last_chunk)
+            current_phase = np.angle(last_chunk_fft[1])
             
-            # 绘制图表
-            fig = analyzer.get_figure()
-            st.plotly_chart(fig, use_container_width=True)
+            # --- Step 4: Strength Calculation ---
+            strength = amp / length
             
-            # 显示信号列表
-            if analyzer.signals:
-                st.subheader("🔔 最新买卖信号")
-                sig_df = pd.DataFrame(analyzer.signals)[['date', 'type', 'price', 'text']]
-                st.table(sig_df.tail(5))
-        else:
-            st.error("未找到数据，请检查代码输入是否正确（港股需加 .HK，美股直接输入代码）。")
+            cycles.append({
+                "Len": length,
+                "Amp": round(amp, 2),
+                "Strg": round(strength, 4),
+                "Stab": round(stability, 2),
+                "Phase": current_phase # Saved for projection math
+            })
+            
+    if not cycles:
+        return pd.DataFrame()
+    
+    cycles_df = pd.DataFrame(cycles)
+    
+    # Remove duplicates (group by length, take the one with highest stability/amplitude)
+    cycles_df = cycles_df.loc[cycles_df.groupby("Len")["Stab"].idxmax()]
+    
+    # Filter by Genuine % (Stability > 0.49) as requested in Whitepaper Step 3
+    valid_cycles = cycles_df[cycles_df["Stab"] > 0.49].copy()
+    
+    # Rank by Strength (Dominant driving force per bar) as requested in Whitepaper Step 4
+    valid_cycles = valid_cycles.sort_values(by="Strg", ascending=False).reset_index(drop=True)
+    
+    return valid_cycles
+
+analyzed_cycles = analyze_cycles(df["Detrended"])
+
+if analyzed_cycles.empty:
+    st.warning("No significant cycles passed the > 49% Stability (Genuine) threshold.")
+    st.stop()
+
+# Add UI Checkbox column (Default top 3 selected)
+analyzed_cycles.insert(0, "Select", False)
+analyzed_cycles.loc[0:min(2, len(analyzed_cycles)-1), "Select"] = True
+
+# ---------------------------------------------------------
+# Layout & UI
+# ---------------------------------------------------------
+col1, col2 = st.columns([3, 1])
+
+with col2:
+    st.subheader("Cycle Spectrum")
+    # Interactive dataframe editor for checkboxes
+    edited_cycles = st.data_editor(
+        analyzed_cycles[["Select", "Len", "Amp", "Strg", "Stab"]],
+        hide_index=True,
+        column_config={"Select": st.column_config.CheckboxColumn("✔️")},
+        use_container_width=True
+    )
+
+# ---------------------------------------------------------
+# Composite Projection
+# ---------------------------------------------------------
+selected_rows = edited_cycles[edited_cycles["Select"] == True]
+active_cycles = analyzed_cycles[analyzed_cycles["Len"].isin(selected_rows["Len"])]
+
+# Build composite wave extending 100 bars into the future
+future_bars = 100
+total_bars = len(df) + future_bars
+
+# We project backwards over the data and forward into the future using the *current* phase
+composite_wave = np.zeros(total_bars)
+
+# The x_axis mapping. The last data point is index len(df) - 1. 
+# Our "current_phase" was calculated such that the end of the data represents the end of the wave.
+for _, row in active_cycles.iterrows():
+    length = row["Len"]
+    amp = row["Amp"]
+    phase = row["Phase"] 
+    
+    omega = 2 * np.pi / length
+    # Adjust x mapping so that at x = len(df)-1, the phase aligns with the 'current_phase'
+    x_range = np.arange(total_bars) - (len(df) - 1) 
+    
+    # Cosine wave based on amplitude, frequency, and localized current phase
+    wave = amp * np.cos(omega * x_range + phase)
+    composite_wave += wave
+
+# Normalize the composite wave to roughly overlay the price visually
+if len(active_cycles) > 0:
+    comp_min, comp_max = composite_wave.min(), composite_wave.max()
+    price_min, price_max = df["Price"].min(), df["Price"].max()
+    
+    # Scale composite wave to fit within the lower half of the price chart to match your image
+    if comp_max != comp_min:
+        scale_factor = (price_max - price_min) / (comp_max - comp_min) * 0.5
+        composite_wave_scaled = (composite_wave - comp_min) * scale_factor + price_min
+    else:
+        composite_wave_scaled = np.full(total_bars, price_min)
 else:
-    st.info("在左侧输入代码并点击『开始分析』按钮。")
+    composite_wave_scaled = np.full(total_bars, np.nan)
+
+# Generate future dates for the x-axis
+last_date = df["Date"].iloc[-1]
+future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=future_bars)
+all_dates = pd.concat([df["Date"], pd.Series(future_dates)]).reset_index(drop=True)
+
+# ---------------------------------------------------------
+# Chart Rendering
+# ---------------------------------------------------------
+with col1:
+    fig = go.Figure()
+
+    # Original Price Line
+    fig.add_trace(go.Scatter(
+        x=df["Date"], 
+        y=df["Price"], 
+        mode='lines', 
+        name='Price',
+        line=dict(color='#2B4A6F', width=1.5)
+    ))
+
+    # Composite Projection Curve
+    fig.add_trace(go.Scatter(
+        x=all_dates, 
+        y=composite_wave_scaled, 
+        mode='lines', 
+        name='Composite Projection',
+        line=dict(color='#D32F2F', width=2, shape='spline')
+    ))
+
+    # Formatting
+    fig.update_layout(
+        title=f"{ticker} Price and Composite Cycle Projection",
+        xaxis_title="Date",
+        yaxis_title="Price / Cycle Amplitude",
+        template="plotly_white",
+        height=650,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=20, r=20, t=60, b=20)
+    )
+    
+    # Vertical line indicating "Today" / Projection Start
+    fig.add_vline(x=last_date.timestamp() * 1000, line_width=1, line_dash="dash", line_color="grey")
+
+    st.plotly_chart(fig, use_container_width=True)
