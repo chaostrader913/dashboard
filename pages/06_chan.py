@@ -15,15 +15,17 @@ st.title("Cycle Scanner Dashboard")
 # ---------------------------------------------------------
 # 1. Data Fetching & Preprocessing
 # ---------------------------------------------------------
-col_input1, col_input2, col_input3 = st.columns(3)
+col_input1, col_input2, col_input3, col_input4 = st.columns([1, 1, 1, 1.5])
 with col_input1:
-    ticker = st.text_input("Ticker Symbol (yfinance)", value="^GSPC")
+    ticker = st.text_input("Ticker Symbol (yfinance)", value="CL=F")
 with col_input2:
-    start_date = st.date_input("Start Date", pd.to_datetime("2020-01-01"))
+    start_date = st.date_input("Start Date", pd.to_datetime("2021-09-08"))
 with col_input3:
     end_date = st.date_input("End Date", pd.to_datetime("today"))
+with col_input4:
+    uploaded_file = st.file_uploader("Or Upload Custom CSV", type=['csv'])
 
-st_threshold = st.slider("Stability Threshold (Genuine %)", min_value=0.0, max_value=1.0, value=0.49, step=0.01)
+st_threshold = st.slider("Stability Threshold (Genuine %)", min_value=0.0, max_value=1.0, value=0.40, step=0.01)
 st.divider()
 
 @st.cache_data(ttl=3600)
@@ -43,13 +45,33 @@ def fetch_data(t, start, end):
     df.rename(columns={'Close': 'Price', 'index': 'Date', 'Date': 'Date'}, inplace=True)
     return df
 
-df = fetch_data(ticker, start_date, end_date)
+def process_csv(file):
+    df = pd.read_csv(file)
+    
+    # Attempt to locate Date and Close columns dynamically
+    date_col = next((col for col in df.columns if 'date' in col.lower()), df.columns[0])
+    close_col = next((col for col in df.columns if 'close' in col.lower() or '收盘' in col), df.columns[-1])
+    
+    df = df[[date_col, close_col]].copy()
+    df.columns = ['Date', 'Price']
+    df['Date'] = pd.to_datetime(df['Date'])
+    
+    # Sort chronologically (oldest to newest)
+    df = df.sort_values(by='Date').reset_index(drop=True)
+    return df
 
-if df.empty:
-    st.error("No data found for the given ticker and dates.")
+# Determine data source
+if uploaded_file is not None:
+    df = process_csv(uploaded_file)
+    st.success(f"Loaded {len(df)} rows from {uploaded_file.name}")
+else:
+    df = fetch_data(ticker, start_date, end_date)
+
+if df.empty or len(df) < 50:
+    st.error("Not enough data found. Please check your ticker or upload a valid CSV with at least 50 bars.")
     st.stop()
 
-# Detrending
+# True HP Filter Detrending (The secret to matching the professional tool!)
 cycle_comp, trend_comp = sm.tsa.filters.hpfilter(df["Price"], lamb=1e10)
 df["Detrended"] = cycle_comp
 
@@ -136,7 +158,7 @@ def analyze_cycles(data, min_len=10, max_len=400):
 analyzed_cycles, full_spectrum_df = analyze_cycles(df["Detrended"])
 
 if analyzed_cycles.empty:
-    st.error("Not enough data to calculate any cycles. Try expanding your date range.")
+    st.error("Not enough data to calculate any cycles.")
     st.stop()
 
 analyzed_cycles.insert(0, "Select", False)
@@ -150,26 +172,28 @@ col1, col2 = st.columns([3, 1])
 with col2:
     st.subheader("Cycle Spectrum Data")
     
-    # --- UPDATED: Background coloring for the Len Column ---
-    def style_len_column(row):
-        if row['Bullish']:
-            # Green pill background
-            style = 'background-color: #4CAF50; color: white; font-weight: bold; text-align: center;'
-        else:
-            # Red/Orange pill background
-            style = 'background-color: #F44336; color: white; font-weight: bold; text-align: center;'
-            
-        return [style if col == 'Len' else '' for col in row.index]
-
     display_cols = ["Select", "Len", "Amp", "Strg", "Stab", "Bullish"]
-    styled_table = analyzed_cycles[display_cols].style.apply(style_len_column, axis=1)
+    df_display = analyzed_cycles[display_cols]
+
+    # --- UPDATED: Bulletproof Matrix Styling for Streamlit ---
+    def build_style_matrix(style_df):
+        matrix = pd.DataFrame('', index=style_df.index, columns=style_df.columns)
+        for idx in style_df.index:
+            if style_df.loc[idx, 'Bullish']:
+                matrix.loc[idx, 'Len'] = 'background-color: #4CAF50; color: white; font-weight: bold; text-align: center;'
+            else:
+                matrix.loc[idx, 'Len'] = 'background-color: #F44336; color: white; font-weight: bold; text-align: center;'
+        return matrix
+
+    styled_table = df_display.style.apply(build_style_matrix, axis=None)
 
     edited_cycles = st.data_editor(
         styled_table,
         hide_index=True,
+        disabled=["Len", "Amp", "Strg", "Stab", "Bullish"], # Disabling columns ensures styles stick
         column_config={
-            "Select": st.column_config.CheckboxColumn("✔️"), 
-            "Bullish": None 
+            "Select": st.column_config.CheckboxColumn("✔️", default=False), 
+            "Bullish": None # Hidden from UI
         },
         use_container_width=True
     )
@@ -193,23 +217,16 @@ for _, row in active_cycles.iterrows():
     wave = amp * np.cos(omega * x_range + phase)
     composite_wave += wave
 
-# --- UPDATED: Centering and wider amplitude scaling to match reference ---
 if len(active_cycles) > 0:
     comp_min, comp_max = composite_wave.min(), composite_wave.max()
     price_min, price_max = df["Price"].min(), df["Price"].max()
     
     if comp_max != comp_min:
-        # Find the midpoints of both the price data and the raw wave
         price_mid = (price_max + price_min) / 2
         comp_mid = (comp_max + comp_min) / 2
-        
-        # Scale the wave to span ~85% of the total price vertical range
         scale_factor = (price_max - price_min) * 0.85 / (comp_max - comp_min)
-        
-        # Center the wave at 0, apply scale, then shift up to the middle of the price chart
         composite_wave_scaled = ((composite_wave - comp_mid) * scale_factor) + price_mid
     else:
-        # Flatline in the middle if no active cycles
         composite_wave_scaled = np.full(total_bars, (price_max + price_min) / 2)
 else:
     composite_wave_scaled = np.full(total_bars, np.nan)
@@ -222,6 +239,7 @@ all_dates = pd.concat([df["Date"], pd.Series(future_dates)]).reset_index(drop=Tr
 # Chart Rendering
 # ---------------------------------------------------------
 with col1:
+    chart_title = uploaded_file.name if uploaded_file else ticker
     fig_main = go.Figure()
     
     fig_main.add_trace(go.Scatter(
@@ -229,14 +247,13 @@ with col1:
         line=dict(color='#2B4A6F', width=1.5)
     ))
     
-    # --- UPDATED: Magenta/Pink color for projection line ---
     fig_main.add_trace(go.Scatter(
         x=all_dates, y=composite_wave_scaled, mode='lines', name='Composite Projection', 
-        line=dict(color='#D81B60', width=2, shape='spline') # Magenta/Pink hex code
+        line=dict(color='#D81B60', width=2, shape='spline') 
     ))
     
     fig_main.update_layout(
-        title=f"{ticker} Price and Composite Cycle", 
+        title=f"{chart_title} Price and Composite Cycle", 
         xaxis_title="Date", yaxis_title="Price", 
         template="plotly_white", height=500, 
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 
