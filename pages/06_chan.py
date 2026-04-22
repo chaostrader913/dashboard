@@ -17,15 +17,25 @@ st.title("Cycle Scanner Dashboard")
 # ---------------------------------------------------------
 col_input1, col_input2, col_input3, col_input4 = st.columns([1, 1, 1, 1.5])
 with col_input1:
-    ticker = st.text_input("Ticker Symbol (yfinance)", value="CL=F")
+    ticker = st.text_input("Ticker Symbol (yfinance)", value="DX-Y.NYB")
 with col_input2:
-    start_date = st.date_input("Start Date", pd.to_datetime("2021-09-08"))
+    start_date = st.date_input("Start Date", pd.to_datetime("2021-09-07"))
 with col_input3:
     end_date = st.date_input("End Date", pd.to_datetime("today"))
 with col_input4:
     uploaded_file = st.file_uploader("Or Upload Custom CSV", type=['csv'])
 
-st_threshold = st.slider("Stability Threshold (Genuine %)", min_value=0.0, max_value=1.0, value=0.40, step=0.01)
+col_slider1, col_slider2 = st.columns(2)
+with col_slider1:
+    st_threshold = st.slider("Stability Threshold (Genuine %)", min_value=0.0, max_value=1.0, value=0.40, step=0.01)
+with col_slider2:
+    # Lambda controls the flexibility of the HP Filter trendline. 
+    # Lower values remove macro-trends (fixing the skewed ~255 peaks).
+    hp_lambda = st.select_slider(
+        "Detrending HP Lambda (Lower = Removes Macro Trends)", 
+        options=[1e5, 1e6, 1e7, 1e8, 1e9, 1e10], 
+        value=1e8
+    )
 st.divider()
 
 @st.cache_data(ttl=3600)
@@ -47,8 +57,6 @@ def fetch_data(t, start, end):
 
 def process_csv(file):
     df = pd.read_csv(file)
-    
-    # Attempt to locate Date and Close columns dynamically
     date_col = next((col for col in df.columns if 'date' in col.lower()), df.columns[0])
     close_col = next((col for col in df.columns if 'close' in col.lower() or '收盘' in col), df.columns[-1])
     
@@ -56,7 +64,6 @@ def process_csv(file):
     df.columns = ['Date', 'Price']
     df['Date'] = pd.to_datetime(df['Date'])
     
-    # Sort chronologically (oldest to newest)
     df = df.sort_values(by='Date').reset_index(drop=True)
     return df
 
@@ -71,8 +78,8 @@ if df.empty or len(df) < 50:
     st.error("Not enough data found. Please check your ticker or upload a valid CSV with at least 50 bars.")
     st.stop()
 
-# True HP Filter Detrending (The secret to matching the professional tool!)
-cycle_comp, trend_comp = sm.tsa.filters.hpfilter(df["Price"], lamb=1e10)
+# Detrending with user-controlled Lambda
+cycle_comp, trend_comp = sm.tsa.filters.hpfilter(df["Price"], lamb=hp_lambda)
 df["Detrended"] = cycle_comp
 
 # ---------------------------------------------------------
@@ -107,17 +114,24 @@ def analyze_cycles(data, min_len=10, max_len=400):
             
         omega = 2 * np.pi / length
         
+        # --- FIXED: Phase Extraction aligned strictly to the last bar ---
         last_chunk = data.values[-length:]
-        t_last = np.arange(length)
+        # By setting t=0 to the last bar, the phase becomes perfectly anchored for projection
+        t_last = np.arange(-length + 1, 1) 
         last_dft = (2 / length) * np.sum(last_chunk * np.exp(-1j * omega * t_last))
         current_phase = np.angle(last_dft)
         
+        # --- FIXED: Bartels Stability chunking backwards from the present ---
         n_chunks = n // length
         if n_chunks >= 3:
             chunk_phases = []
             for c in range(n_chunks):
-                chunk = data.values[c * length : (c + 1) * length]
-                t_chunk = np.arange(length)
+                # Always anchor chunks to the most recent data
+                start_idx = n - (c + 1) * length
+                end_idx = n - c * length
+                chunk = data.values[start_idx : end_idx]
+                
+                t_chunk = np.arange(-length + 1, 1)
                 chunk_dft = (2 / length) * np.sum(chunk * np.exp(-1j * omega * t_chunk))
                 chunk_phases.append(np.angle(chunk_dft))
             
@@ -126,6 +140,7 @@ def analyze_cycles(data, min_len=10, max_len=400):
         else:
             stability = 0.0
             
+        # Direction determined by next single step relative to anchored phase
         curr_val = amp * np.cos(current_phase)
         next_val = amp * np.cos(omega * 1 + current_phase)
         is_bullish = next_val > curr_val
@@ -175,7 +190,6 @@ with col2:
     display_cols = ["Select", "Len", "Amp", "Strg", "Stab", "Bullish"]
     df_display = analyzed_cycles[display_cols]
 
-    # --- UPDATED: Bulletproof Matrix Styling for Streamlit ---
     def build_style_matrix(style_df):
         matrix = pd.DataFrame('', index=style_df.index, columns=style_df.columns)
         for idx in style_df.index:
@@ -190,10 +204,10 @@ with col2:
     edited_cycles = st.data_editor(
         styled_table,
         hide_index=True,
-        disabled=["Len", "Amp", "Strg", "Stab", "Bullish"], # Disabling columns ensures styles stick
+        disabled=["Len", "Amp", "Strg", "Stab", "Bullish"], 
         column_config={
             "Select": st.column_config.CheckboxColumn("✔️", default=False), 
-            "Bullish": None # Hidden from UI
+            "Bullish": None 
         },
         use_container_width=True
     )
@@ -213,6 +227,7 @@ for _, row in active_cycles.iterrows():
     amp = row["Amp"]
     phase = row["Phase"] 
     omega = 2 * np.pi / length
+    # Phase perfectly anchored to the end of history
     x_range = np.arange(total_bars) - (len(df) - 1) 
     wave = amp * np.cos(omega * x_range + phase)
     composite_wave += wave
