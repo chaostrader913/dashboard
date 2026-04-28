@@ -71,6 +71,7 @@ with bt_col2:
     if "Corrected QWMA" in overlays: available_strats.append("CQWMA Trend Color")
     if "Jurik MA" in overlays: available_strats.append("Price vs Jurik MA")
     if "Natural MA" in overlays or "Natural Channel" in overlays: available_strats.append("Price vs Natural MA")
+    if "Dynamic MA" in overlays or "DMA Bands" in overlays: available_strats.append("Price vs Dynamic MA")
     if "TD Sequential" in overlays: available_strats.append("TD Sequential (Buy 9/Sell 9)")
     if "MACD" in oscillators: available_strats.append("MACD Crossover")
     
@@ -96,6 +97,8 @@ if "MACD" in oscillators: data = apply_macd(data, fast=macd_fast, slow=macd_slow
 if "Jurik MA" in overlays: data = apply_jma(data, length=jma_len, phase=jma_phase)
 if "Natural MA" in overlays: data = apply_natural_moving_average(data, length=nma_len)
 if "Natural Channel" in overlays: data = apply_natural_market_channel(data, nma_length=nma_len, multiplier=nmc_mult)
+if "Dynamic MA" in overlays: data = apply_dma(data, base_length=dma_len, smoothing=dma_smooth)
+if "DMA Bands" in overlays: data = apply_dma_bands(data, dma_length=dma_len, multiplier=dma_mult)
 if "Corrected QWMA" in overlays: data = apply_corrected_qwma(data, ma_period=qwma_len)
 
 # --- 6. Dynamic Backtest Engine Logic ---
