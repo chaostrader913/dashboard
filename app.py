@@ -9,10 +9,11 @@ page_scanner = st.Page("pages/03_Signal_Scanner.py", title="Signal Scanner", ico
 page_mtf = st.Page("pages/04_MTF_Analyzer.py", title="MTF Analyzer", icon="🚀")
 page_bump = st.Page("pages/05_bump_chart.py", title="Sector Rotation", icon="📈")
 page_chan = st.Page("pages/06_chan.py", title="Chan Theory", icon="📈")
+page_tv = st.Page("pages/07_tv.py", title="TradingView", icon="📈")
 
 # 2. Initialize the navigation
 # Passing them in a list dictates the order they appear in the sidebar
-pg = st.navigation([page_intro, page_chart, page_scanner,page_mtf,page_bump,page_chan])
+pg = st.navigation([page_intro, page_chart, page_scanner,page_mtf,page_bump,page_chan,page_tv])
 
 # 3. Run the selected page
 pg.run()
