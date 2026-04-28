@@ -32,7 +32,7 @@ with col3:
 with col4:
     overlays = st.multiselect(
         "PRICE OVERLAYS", 
-        options=["TD Sequential", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel","Dynamic MA","DMA Bands"], 
+        options=["TD Sequential", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel", "Dynamic MA", "DMA Bands"], 
         default=["TD Sequential", "Corrected QWMA"]
     )
 with col5:
@@ -46,7 +46,7 @@ with col6:
 
 # --- 3. Indicator Parameter Tuning ---
 with st.expander("⚙️ INDICATOR PARAMETERS", expanded=False):
-    p1, p2, p3, p4 = st.columns(4)
+    p1, p2, p3, p4, p5 = st.columns(5)
     with p1:
         jma_len = st.number_input("Jurik MA Length", 1, 100, 7)
         jma_phase = st.number_input("Jurik MA Phase", -100, 100, 0)
@@ -54,10 +54,14 @@ with st.expander("⚙️ INDICATOR PARAMETERS", expanded=False):
         nma_len = st.number_input("Natural MA Length", 1, 200, 40)
         nmc_mult = st.number_input("Natural Channel Mult", 0.1, 5.0, 1.5)
     with p3:
+        dma_len = st.number_input("DMA Base Length", 1, 200, 10)
+        dma_smooth = st.number_input("DMA Smoothing", 1, 10, 2)
+        dma_mult = st.number_input("DMA Band Mult", 0.1, 5.0, 2.5)
+    with p4:
         qwma_len = st.number_input("QWMA Period", 1, 100, 25)
         macd_fast = st.number_input("MACD Fast", 1, 50, 12)
         macd_slow = st.number_input("MACD Slow", 1, 100, 26)
-    with p4:
+    with p5:
         rsi_len = st.number_input("RSI Period", 1, 50, 14)
         rsi_lookback = st.number_input("RSI Lookback", 5, 100, 20)
 
@@ -115,6 +119,9 @@ if run_backtest and bt_source:
     elif bt_source == "Price vs Natural MA" and 'NMA' in data.columns:
         pos = pd.Series(np.where(data['Close'] > data['NMA'], 1, -1), index=data.index)
         
+    elif bt_source == "Price vs Dynamic MA" and 'DMA' in data.columns:
+        pos = pd.Series(np.where(data['Close'] > data['DMA'], 1, -1), index=data.index)
+        
     elif bt_source == "MACD Crossover" and 'MACD' in data.columns:
         pos = pd.Series(np.where(data['MACD'] > data['MACD_Signal'], 1, -1), index=data.index)
         
@@ -129,7 +136,6 @@ if run_backtest and bt_source:
     
     # Calculate Equity Curve (Starting capital: $10,000)
     data['Equity'] = (1 + data['Strat_Return'].fillna(0)).cumprod() * 10000
-
 
 def get_time(idx):
     return int(pd.Timestamp(idx).timestamp())
@@ -219,7 +225,7 @@ if "Volume" in data.columns:
         }
     })
 
-# Custom Moving Averages
+# --- Custom Moving Averages Plotted ---
 if "Jurik MA" in overlays and 'JMA' in data.columns:
     jma_data = [{"time": get_time(idx), "value": r['JMA']} for idx, r in data.iterrows() if pd.notna(r['JMA'])]
     main_series.append({"type": "Line", "data": jma_data, "options": {"color": "#E040FB", "lineWidth": 2, "crosshairMarkerVisible": False}})
@@ -231,8 +237,18 @@ if "Natural MA" in overlays and 'NMA' in data.columns:
 if "Natural Channel" in overlays and 'NMC_Upper' in data.columns:
     nmc_up = [{"time": get_time(idx), "value": r['NMC_Upper']} for idx, r in data.iterrows() if pd.notna(r['NMC_Upper'])]
     nmc_dn = [{"time": get_time(idx), "value": r['NMC_Lower']} for idx, r in data.iterrows() if pd.notna(r['NMC_Lower'])]
-    main_series.append({"type": "Line", "data": nmc_up, "options": {"color": "#FF9100", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
-    main_series.append({"type": "Line", "data": nmc_dn, "options": {"color": "#FF9100", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": nmc_up, "options": {"color": "#00E676", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": nmc_dn, "options": {"color": "#00E676", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+
+if "Dynamic MA" in overlays and 'DMA' in data.columns:
+    dma_data = [{"time": get_time(idx), "value": r['DMA']} for idx, r in data.iterrows() if pd.notna(r['DMA'])]
+    main_series.append({"type": "Line", "data": dma_data, "options": {"color": "#2962FF", "lineWidth": 2, "crosshairMarkerVisible": False}})
+
+if "DMA Bands" in overlays and 'DMA_Upper' in data.columns:
+    dma_up = [{"time": get_time(idx), "value": r['DMA_Upper']} for idx, r in data.iterrows() if pd.notna(r['DMA_Upper'])]
+    dma_dn = [{"time": get_time(idx), "value": r['DMA_Lower']} for idx, r in data.iterrows() if pd.notna(r['DMA_Lower'])]
+    main_series.append({"type": "Line", "data": dma_up, "options": {"color": "#D50000", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": dma_dn, "options": {"color": "#D50000", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
 
 if "Corrected QWMA" in overlays and 'CQWMA' in data.columns:
     cqwma_up = [{"time": get_time(idx), "value": r['CQWMA_Up']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Up'])]
@@ -349,4 +365,4 @@ if has_bt:
 
 # --- 8. Render to Streamlit ---
 with st.container(border=True):
-    renderLightweightCharts(charts)
+    renderLightweightCharts(charts,height=800)
