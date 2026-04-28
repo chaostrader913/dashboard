@@ -365,4 +365,4 @@ if has_bt:
 
 # --- 8. Render to Streamlit ---
 with st.container(border=True):
-    renderLightweightCharts(charts,height=800)
+    renderLightweightCharts(charts)
