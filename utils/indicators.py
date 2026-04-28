@@ -207,81 +207,91 @@ def apply_td_sequential(df):
 
     return df
 
-import numpy as np
-import pandas as pd
-from scipy.signal import argrelextrema
-
-import numpy as np
-import pandas as pd
-from scipy.signal import argrelextrema
-
-def apply_advanced_trendlines(df, window=5, pct_limit=5.0, breaks_limit=2, max_lines=3):
+def apply_jma(df, length=7, phase=0):
     """
-    Identifies valid trendlines, scores them by length/significance, 
-    and returns only the top N lines to prevent chart clutter.
+    Calculates the Jurik Moving Average (JMA) utilizing pandas-ta.
+    Phase typically ranges from -100 to 100.
     """
     df = df.copy()
     
-    # Increase the window to find only major swing points (macro fractals)
-    highs = argrelextrema(df['High'].values, np.greater_equal, order=window)[0]
-    lows = argrelextrema(df['Low'].values, np.less_equal, order=window)[0]
+    # Calculate JMA using pandas-ta and append it to the dataframe
+    df.ta.jma(length=length, phase=phase, append=True)
     
-    valid_upper_lines = []
-    valid_lower_lines = []
-    last_close = df['Close'].iloc[-1]
-    
-    # --- Upper Trendlines (Resistance) ---
-    for i in range(len(highs)):
-        for j in range(i + 1, len(highs)):
-            idx1, idx2 = highs[i], highs[j]
-            y1, y2 = df['High'].iloc[idx1], df['High'].iloc[idx2]
-            
-            slope = (y2 - y1) / (idx2 - idx1)
-            end_y = y1 + slope * ((len(df) - 1) - idx1)
-            
-            if abs(1 - (end_y / last_close)) * 100 <= pct_limit:
-                breaks = 0
-                for k in range(idx2 + 1, len(df)):
-                    projected_y = y1 + slope * (k - idx1)
-                    if df['Close'].iloc[k] > projected_y:
-                        breaks += 1
-                    if breaks > breaks_limit:
-                        break 
-                        
-                if breaks <= breaks_limit:
-                    line_length = (len(df) - 1) - idx1 # Score by how long the line has survived
-                    valid_upper_lines.append((line_length, ((df.index[idx1], y1), (df.index[-1], end_y))))
-                    
-    # --- Lower Trendlines (Support) ---
-    for i in range(len(lows)):
-        for j in range(i + 1, len(lows)):
-            idx1, idx2 = lows[i], lows[j]
-            y1, y2 = df['Low'].iloc[idx1], df['Low'].iloc[idx2]
-            
-            slope = (y2 - y1) / (idx2 - idx1)
-            end_y = y1 + slope * ((len(df) - 1) - idx1)
-            
-            if abs(1 - (end_y / last_close)) * 100 <= pct_limit:
-                breaks = 0
-                for k in range(idx2 + 1, len(df)):
-                    projected_y = y1 + slope * (k - idx1)
-                    if df['Close'].iloc[k] < projected_y:
-                        breaks += 1
-                    if breaks > breaks_limit:
-                        break 
-                        
-                if breaks <= breaks_limit:
-                    line_length = (len(df) - 1) - idx1
-                    valid_lower_lines.append((line_length, ((df.index[idx1], y1), (df.index[-1], end_y))))
-                    
-    # Sort by length (descending) and keep only the top `max_lines`
-    valid_upper_lines.sort(key=lambda x: x[0], reverse=True)
-    valid_lower_lines.sort(key=lambda x: x[0], reverse=True)
-    
-    # Strip out the length score, returning just the coordinates for Plotly
-    top_upper = [coords for length, coords in valid_upper_lines[:max_lines]]
-    top_lower = [coords for length, coords in valid_lower_lines[:max_lines]]
-    
-    return top_upper, top_lower
+    # Locate the generated pandas-ta JMA column (e.g., JMA_7_0) and rename to 'JMA'
+    jma_cols = [col for col in df.columns if col.startswith('JMA_')]
+    if jma_cols:
+        df.rename(columns={jma_cols[-1]: 'JMA'}, inplace=True)
+        
+    return df
 
+def apply_natural_moving_average(df, length=40):
+    """
+    Calculates Jim Sloman's Ocean Natural Moving Average (NMA).
+    Uses the Natural Market River concept for dynamically adaptive momentum smoothing.
+    """
+    df = df.copy()
+    close = df['Close']
+    
+    # 1. Generate Ocean Weights: sqrt(x) - sqrt(x-1)
+    # The most recent bar (x=1) gets the highest weight, tapering off as x increases to `length`.
+    weights = np.sqrt(np.arange(1, length + 1)) - np.sqrt(np.arange(0, length))
+    
+    # When using pandas rolling apply, data is passed oldest to newest (index 0 to length-1).
+    # We reverse the weights so the highest weight (index 0 of original) aligns with the newest data.
+    weights_reversed = weights[::-1]
+    
+    # 2. Calculate point-to-point price deltas
+    delta = close.diff()
+    abs_delta = delta.abs()
+    
+    # 3. Calculate Natural Market River (NMR) & Total Absolute Delta
+    def calc_weighted_sum(arr):
+        return np.sum(arr * weights_reversed)
+        
+    # The NMR (Numerator) is the absolute value of the weighted net directional movement
+    nmr = delta.rolling(window=length).apply(calc_weighted_sum, raw=True).abs()
+    
+    # The Denominator is the weighted sum of absolute price movements (volatility)
+    total_delta = abs_delta.rolling(window=length).apply(calc_weighted_sum, raw=True)
+    
+    # 4. Calculate Dynamic Ratio (Alpha)
+    ratio = nmr / total_delta.replace(0, np.nan)
+    ratio = ratio.fillna(0) # Handle division by zero in perfectly flat markets
+    
+    # 5. Iterative EMA calculation applying the dynamic ratio
+    nma = np.full(len(close), np.nan)
+    close_arr = close.values
+    ratio_arr = ratio.values
+    
+    first_valid = ratio.notna().idxmax()
+    if pd.notna(first_valid) and first_valid in df.index:
+        start_idx = df.index.get_loc(first_valid)
+        nma[start_idx] = close_arr[start_idx]
+        
+        for i in range(start_idx + 1, len(close)):
+            alpha = ratio_arr[i]
+            nma[i] = nma[i-1] + alpha * (close_arr[i] - nma[i-1])
+            
+    df['NMA'] = nma
+    return df
 
+def apply_natural_market_channel(df, nma_length=40, atr_length=14, multiplier=1.5):
+    """
+    Calculates the Natural Market Channel (NMC).
+    Builds adaptive volatility bands around Jim Sloman's Natural Moving Average (NMA).
+    """
+    df = df.copy()
+    
+    # 1. Ensure NMA is calculated first
+    if 'NMA' not in df.columns:
+        df = apply_natural_moving_average(df, length=nma_length)
+        
+    # 2. Calculate Average True Range (ATR) as the dynamic channel width
+    df.ta.atr(length=atr_length, append=True)
+    atr_col = [col for col in df.columns if col.startswith('ATRr_')][-1]
+    
+    # 3. Build Upper and Lower Natural Market Channel bands
+    df['NMC_Upper'] = df['NMA'] + (df[atr_col] * multiplier)
+    df['NMC_Lower'] = df['NMA'] - (df[atr_col] * multiplier)
+    
+    return df
