@@ -32,7 +32,7 @@ with col3:
 with col4:
     overlays = st.multiselect(
         "PRICE OVERLAYS", 
-        options=["TD Sequential", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel"], 
+        options=["TD Sequential", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel","Dynamic MA","DMA Bands"], 
         default=["TD Sequential", "Corrected QWMA"]
     )
 with col5:
