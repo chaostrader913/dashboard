@@ -10,11 +10,14 @@ from utils.indicators import (
     apply_rsi_divergence, 
     apply_macd, 
     apply_corrected_qwma, 
-    apply_advanced_trendlines
+    apply_advanced_trendlines,
+    apply_jma,
+    apply_natural_moving_average,
+    apply_natural_market_channel
 )
 
 # --- 1. Terminal UI Styling ---
-st.markdown("### 📡 MODULE: ADVANCED SIGNAL SCANNER (LW-CHARTS)")
+st.markdown("### 🎛️ MODULE: ADVANCED SIGNAL SCANNER (LW-CHARTS)")
 st.divider()
 
 # --- 2. Command Row (User Inputs) ---
@@ -28,7 +31,7 @@ with col3:
 with col4:
     overlays = st.multiselect(
         "PRICE OVERLAYS", 
-        options=["TD Sequential", "Auto Trendlines", "Corrected QWMA"], 
+        options=["TD Sequential", "Auto Trendlines", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel"], 
         default=["TD Sequential", "Corrected QWMA"]
     )
 with col5:
@@ -40,7 +43,7 @@ with col5:
 with col6:
     max_tl = st.slider("MAX TRENDLINES", min_value=1, max_value=10, value=3) if "Auto Trendlines" in overlays else 3
     use_log = st.checkbox("Logarithmic Scale", value=True) if timeframe == "1d" else False
-    # 🔥 NEW: Backtest Toggle
+    # 🎛️ NEW: Backtest Toggle
     run_backtest = st.checkbox("Run QWMA Backtest", value=True) if "Corrected QWMA" in overlays else False
         
 # --- 3. Data Processing & Indicator Application ---
@@ -55,8 +58,11 @@ if data is None or data.empty:
 if "TD Sequential" in overlays: data = apply_td_sequential(data)
 if "RSI Divergence" in oscillators: data = apply_rsi_divergence(data)
 if "MACD" in oscillators: data = apply_macd(data)
+if "Jurik MA" in overlays: data = apply_jma(data)
+if "Natural MA" in overlays: data = apply_natural_moving_average(data)
+if "Natural Channel" in overlays: data = apply_natural_market_channel(data)
 
-# 🔥 NEW: QWMA Backtesting Logic
+# 🎛️ NEW: QWMA Backtesting Logic
 if "Corrected QWMA" in overlays: 
     data = apply_corrected_qwma(data)
     
@@ -113,7 +119,7 @@ chart_layout = {
     }
 }
 
-# --- 🔥 DYNAMIC AXIS LOGIC (UPDATED FOR BACKTEST) ---
+# --- 🎛️ DYNAMIC AXIS LOGIC (UPDATED FOR BACKTEST) ---
 has_rsi = "RSI Divergence" in oscillators
 has_macd = "MACD" in oscillators
 has_bt = run_backtest
@@ -162,6 +168,21 @@ if "Volume" in data.columns:
             "scaleMargins": {"top": 0.85, "bottom": 0} 
         }
     })
+
+# --- Custom Moving Averages ---
+if "Jurik MA" in overlays and 'JMA' in data.columns:
+    jma_data = [{"time": get_time(idx), "value": r['JMA']} for idx, r in data.iterrows() if pd.notna(r['JMA'])]
+    main_series.append({"type": "Line", "data": jma_data, "options": {"color": "#E040FB", "lineWidth": 2, "crosshairMarkerVisible": False}})
+
+if "Natural MA" in overlays and 'NMA' in data.columns:
+    nma_data = [{"time": get_time(idx), "value": r['NMA']} for idx, r in data.iterrows() if pd.notna(r['NMA'])]
+    main_series.append({"type": "Line", "data": nma_data, "options": {"color": "#00E676", "lineWidth": 2, "crosshairMarkerVisible": False}})
+
+if "Natural Channel" in overlays and 'NMC_Upper' in data.columns:
+    nmc_up = [{"time": get_time(idx), "value": r['NMC_Upper']} for idx, r in data.iterrows() if pd.notna(r['NMC_Upper'])]
+    nmc_dn = [{"time": get_time(idx), "value": r['NMC_Lower']} for idx, r in data.iterrows() if pd.notna(r['NMC_Lower'])]
+    main_series.append({"type": "Line", "data": nmc_up, "options": {"color": "#FF9100", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": nmc_dn, "options": {"color": "#FF9100", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
 
 if "Corrected QWMA" in overlays and 'CQWMA' in data.columns:
     cqwma_up = [{"time": get_time(idx), "value": r['CQWMA_Up']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Up'])]
@@ -255,7 +276,7 @@ if has_macd and 'MACD' in data.columns:
         ]
     })
 
-# --- 🔥 PANE 4: BACKTEST EQUITY CURVE ---
+# --- 🎛️ PANE 4: BACKTEST EQUITY CURVE ---
 if has_bt and 'Equity' in data.columns:
     baseline_data = [{"time": get_time(idx), "value": r['Equity']} for idx, r in data.iterrows() if pd.notna(r['Equity'])]
     bt_dummy = [{"time": get_time(idx), "value": 10000} for idx, r in data.iterrows()]
