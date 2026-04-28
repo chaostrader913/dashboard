@@ -1,24 +1,42 @@
 import streamlit as st
 import streamlit.components.v1 as components
 
+# 1. Force Streamlit to use the full width of your monitor
+st.set_page_config(layout="wide") 
+
 st.markdown("### 🎛️ MODULE: TRADINGVIEW ADVANCED WIDGET")
 st.divider()
 
-# --- 1. Basic UI Controls ---
+# --- Basic UI Controls ---
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
-    # TradingView uses specific exchange prefixes, e.g., BINANCE:BTCUSD or NASDAQ:AAPL
     ticker = st.text_input("TARGET ASSET", value="BINANCE:BTCUSD").upper()
 with col2:
-    # TradingView widget interval formats: "1", "15", "60", "D", "W"
     timeframe = st.selectbox("TIMEFRAME", options=["D", "60", "15"], index=0)
 with col3:
     theme = st.selectbox("THEME", ["dark", "light"], index=0)
 
 # --- 2. TradingView Widget HTML/JS ---
-# We use string formatting to pass the Streamlit variables into the JS widget config
+# Added custom CSS to force the HTML body and divs to 100% height
 tradingview_html = f"""
-<div class="tradingview-widget-container" style="height:100%;width:100%">
+<style>
+  html, body {{
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+  }}
+  .tradingview-widget-container {{
+    height: 100%;
+    width: 100%;
+  }}
+  #tradingview_chart {{
+    height: 100%;
+    width: 100%;
+  }}
+</style>
+
+<div class="tradingview-widget-container">
   <div id="tradingview_chart"></div>
   <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
   <script type="text/javascript">
@@ -45,6 +63,6 @@ tradingview_html = f"""
 """
 
 # --- 3. Render in Streamlit ---
-# Adjust the height as needed. 600px gives a good viewing area.
+# Bumped the height from 600 to 800 for a larger vertical canvas
 with st.container(border=True):
-    components.html(tradingview_html, height=600)
+    components.html(tradingview_html, height=800)
