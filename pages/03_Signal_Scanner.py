@@ -30,7 +30,7 @@ with col3:
 with col4:
     overlays = st.multiselect(
         "PRICE OVERLAYS", 
-        options=["TD Sequential", "Auto Trendlines", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel"], 
+        options=["TD Sequential", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel"], 
         default=["TD Sequential", "Corrected QWMA"]
     )
 with col5:
@@ -40,12 +40,46 @@ with col5:
         default=["RSI Divergence"]
     )
 with col6:
-    max_tl = st.slider("MAX TRENDLINES", min_value=1, max_value=10, value=3) if "Auto Trendlines" in overlays else 3
-    use_log = st.checkbox("Logarithmic Scale", value=True) if timeframe == "1d" else False
-    # 🎛️ NEW: Backtest Toggle
-    run_backtest = st.checkbox("Run QWMA Backtest", value=True) if "Corrected QWMA" in overlays else False
-        
-# --- 3. Data Processing & Indicator Application ---
+    use_log = st.checkbox("Logarithmic", value=True) if timeframe == "1d" else False
+
+# --- 3. Indicator Parameter Tuning ---
+with st.expander("⚙️ INDICATOR PARAMETERS", expanded=False):
+    p1, p2, p3, p4 = st.columns(4)
+    with p1:
+        jma_len = st.number_input("Jurik MA Length", 1, 100, 7)
+        jma_phase = st.number_input("Jurik MA Phase", -100, 100, 0)
+    with p2:
+        nma_len = st.number_input("Natural MA Length", 1, 200, 40)
+        nmc_mult = st.number_input("Natural Channel Mult", 0.1, 5.0, 1.5)
+    with p3:
+        qwma_len = st.number_input("QWMA Period", 1, 100, 25)
+        macd_fast = st.number_input("MACD Fast", 1, 50, 12)
+        macd_slow = st.number_input("MACD Slow", 1, 100, 26)
+    with p4:
+        rsi_len = st.number_input("RSI Period", 1, 50, 14)
+        rsi_lookback = st.number_input("RSI Lookback", 5, 100, 20)
+
+# --- 4. Backtesting Config Row ---
+st.markdown("##### 🧪 BACKTEST CONFIGURATION")
+bt_col1, bt_col2, bt_col3 = st.columns([1.5, 3, 6])
+with bt_col1:
+    run_backtest = st.checkbox("Enable Backtest Engine", value=False)
+with bt_col2:
+    available_strats = []
+    if "Corrected QWMA" in overlays: available_strats.append("CQWMA Trend Color")
+    if "Jurik MA" in overlays: available_strats.append("Price vs Jurik MA")
+    if "Natural MA" in overlays or "Natural Channel" in overlays: available_strats.append("Price vs Natural MA")
+    if "TD Sequential" in overlays: available_strats.append("TD Sequential (Buy 9/Sell 9)")
+    if "MACD" in oscillators: available_strats.append("MACD Crossover")
+    
+    bt_source = None
+    if run_backtest:
+        if not available_strats:
+            st.warning("⚠️ Select an indicator above to unlock backtesting.")
+        else:
+            bt_source = st.selectbox("Strategy Logic", available_strats, label_visibility="collapsed")
+
+# --- 5. Data Processing & Indicator Application ---
 with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
     data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1d" else "60d")
 
@@ -53,37 +87,49 @@ if data is None or data.empty:
     st.error(f"ERR: NO DATA FOUND FOR {ticker}.")
     st.stop()
 
-# Apply selected mathematical models
+# Apply selected mathematical models with user parameters
 if "TD Sequential" in overlays: data = apply_td_sequential(data)
-if "RSI Divergence" in oscillators: data = apply_rsi_divergence(data)
-if "MACD" in oscillators: data = apply_macd(data)
-if "Jurik MA" in overlays: data = apply_jma(data)
-if "Natural MA" in overlays: data = apply_natural_moving_average(data)
-if "Natural Channel" in overlays: data = apply_natural_market_channel(data)
+if "RSI Divergence" in oscillators: data = apply_rsi_divergence(data, rsi_period=rsi_len, lookback=rsi_lookback)
+if "MACD" in oscillators: data = apply_macd(data, fast=macd_fast, slow=macd_slow)
+if "Jurik MA" in overlays: data = apply_jma(data, length=jma_len, phase=jma_phase)
+if "Natural MA" in overlays: data = apply_natural_moving_average(data, length=nma_len)
+if "Natural Channel" in overlays: data = apply_natural_market_channel(data, nma_length=nma_len, multiplier=nmc_mult)
+if "Corrected QWMA" in overlays: data = apply_corrected_qwma(data, ma_period=qwma_len)
 
-# 🎛️ NEW: QWMA Backtesting Logic
-if "Corrected QWMA" in overlays: 
-    data = apply_corrected_qwma(data)
+# --- 6. Dynamic Backtest Engine Logic ---
+if run_backtest and bt_source:
+    pos = pd.Series(0, index=data.index)
     
-    if run_backtest and 'CQWMA_Color' in data.columns:
-        # 1 = Long (Green), 2 = Short (Red), 0 = Neutral/Hold.
-        # We forward fill to hold the current position until an opposite signal fires.
-        pos = data['CQWMA_Color'].replace(0, np.nan).ffill()
-        pos = pos.replace({1: 1, 2: -1}).fillna(0)
+    # Generate Position Vectors (1 = Long, -1 = Short)
+    if bt_source == "CQWMA Trend Color" and 'CQWMA_Color' in data.columns:
+        pos = data['CQWMA_Color'].replace({0: np.nan, 2: -1}).ffill().fillna(0)
         
-        # Shift by 1 to prevent lookahead bias (trade occurs AFTER the signal candle closes)
-        data['Position'] = pos.shift(1)
+    elif bt_source == "Price vs Jurik MA" and 'JMA' in data.columns:
+        pos = pd.Series(np.where(data['Close'] > data['JMA'], 1, -1), index=data.index)
         
-        # Calculate daily strategy returns vs buy and hold
-        data['Strat_Return'] = data['Position'] * data['Close'].pct_change()
+    elif bt_source == "Price vs Natural MA" and 'NMA' in data.columns:
+        pos = pd.Series(np.where(data['Close'] > data['NMA'], 1, -1), index=data.index)
         
-        # Calculate Equity Curve (Starting with $10,000 capital)
-        data['Equity'] = (1 + data['Strat_Return'].fillna(0)).cumprod() * 10000
+    elif bt_source == "MACD Crossover" and 'MACD' in data.columns:
+        pos = pd.Series(np.where(data['MACD'] > data['MACD_Signal'], 1, -1), index=data.index)
+        
+    elif bt_source == "TD Sequential (Buy 9/Sell 9)" and 'Setup_Signal' in data.columns:
+        pos = data['Setup_Signal'].replace(0, np.nan).ffill().fillna(0)
+
+    # Shift by 1 to prevent lookahead bias (trade executes on the open of the next candle)
+    data['Position'] = pos.shift(1)
+    
+    # Calculate daily strategy returns
+    data['Strat_Return'] = data['Position'] * data['Close'].pct_change()
+    
+    # Calculate Equity Curve (Starting capital: $10,000)
+    data['Equity'] = (1 + data['Strat_Return'].fillna(0)).cumprod() * 10000
+
 
 def get_time(idx):
     return int(pd.Timestamp(idx).timestamp())
 
-# --- 4. Dynamic Charting Engine (Lightweight Charts) ---
+# --- 7. Dynamic Charting Engine (Lightweight Charts) ---
 charts = []
 
 themes = {
@@ -118,10 +164,10 @@ chart_layout = {
     }
 }
 
-# --- 🎛️ DYNAMIC AXIS LOGIC (UPDATED FOR BACKTEST) ---
+# --- DYNAMIC AXIS LOGIC ---
 has_rsi = "RSI Divergence" in oscillators
 has_macd = "MACD" in oscillators
-has_bt = run_backtest
+has_bt = run_backtest and 'Equity' in data.columns
 
 price_is_bottom = not (has_rsi or has_macd or has_bt)
 rsi_is_bottom = has_rsi and not (has_macd or has_bt)
@@ -168,7 +214,7 @@ if "Volume" in data.columns:
         }
     })
 
-# --- Custom Moving Averages ---
+# Custom Moving Averages
 if "Jurik MA" in overlays and 'JMA' in data.columns:
     jma_data = [{"time": get_time(idx), "value": r['JMA']} for idx, r in data.iterrows() if pd.notna(r['JMA'])]
     main_series.append({"type": "Line", "data": jma_data, "options": {"color": "#E040FB", "lineWidth": 2, "crosshairMarkerVisible": False}})
@@ -200,15 +246,6 @@ if "Corrected QWMA" in overlays and 'CQWMA' in data.columns:
     main_series.append({"type": "Line", "data": cqwma_mid, "options": {"color": "#888888", "lineWidth": 1, "lineStyle": 3, "crosshairMarkerVisible": False}})
     main_series.append({"type": "Line", "data": cqwma_dn, "options": {"color": c_theme["down"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
     main_series.append({"type": "Line", "data": cqwma_data, "options": {"lineWidth": 3}})
-
-if "Auto Trendlines" in overlays:
-    upper_lines, lower_lines = apply_advanced_trendlines(data, window=5, pct_limit=10.0, breaks_limit=2)
-    for line in upper_lines:
-        t1, t2 = get_time(line[0][0]), get_time(line[1][0])
-        main_series.append({"type": "Line", "data": [{"time": t1, "value": line[0][1]}, {"time": t2, "value": line[1][1]}], "options": {"color": c_theme["down"], "lineWidth": 1, "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}})
-    for line in lower_lines:
-        t1, t2 = get_time(line[0][0]), get_time(line[1][0])
-        main_series.append({"type": "Line", "data": [{"time": t1, "value": line[0][1]}, {"time": t2, "value": line[1][1]}], "options": {"color": c_theme["up"], "lineWidth": 1, "lineStyle": 2, "lastValueVisible": False, "priceLineVisible": False}})
 
 charts.append({
     "chart": {
@@ -275,8 +312,8 @@ if has_macd and 'MACD' in data.columns:
         ]
     })
 
-# --- 🎛️ PANE 4: BACKTEST EQUITY CURVE ---
-if has_bt and 'Equity' in data.columns:
+# --- PANE 4: BACKTEST EQUITY CURVE ---
+if has_bt:
     baseline_data = [{"time": get_time(idx), "value": r['Equity']} for idx, r in data.iterrows() if pd.notna(r['Equity'])]
     bt_dummy = [{"time": get_time(idx), "value": 10000} for idx, r in data.iterrows()]
 
@@ -292,7 +329,7 @@ if has_bt and 'Equity' in data.columns:
                 "type": "Baseline", 
                 "data": baseline_data, 
                 "options": {
-                    "baseValue": {"type": "price", "price": 10000}, # Anchors the chart at initial capital
+                    "baseValue": {"type": "price", "price": 10000}, # Anchors chart at initial capital
                     "topLineColor": c_theme["up"],
                     "topFillColor1": c_theme["vol_up"],
                     "topFillColor2": "rgba(0, 0, 0, 0)",
@@ -305,6 +342,6 @@ if has_bt and 'Equity' in data.columns:
         ]
     })
 
-# --- 5. Render to Streamlit ---
+# --- 8. Render to Streamlit ---
 with st.container(border=True):
     renderLightweightCharts(charts)
