@@ -12,7 +12,9 @@ from utils.indicators import (
     apply_corrected_qwma, 
     apply_jma,
     apply_natural_moving_average,
-    apply_natural_market_channel
+    apply_natural_market_channel,
+    apply_dma,
+    apply_dma_bands
 )
 
 # --- 1. Terminal UI Styling ---
