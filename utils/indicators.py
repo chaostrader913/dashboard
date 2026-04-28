@@ -295,3 +295,56 @@ def apply_natural_market_channel(df, nma_length=40, atr_length=14, multiplier=1.
     df['NMC_Lower'] = df['NMA'] - (df[atr_col] * multiplier)
     
     return df
+
+def apply_dma(df, base_length=8, smoothing=2):
+    """
+    Dynamic Moving Average: adjusts length based on price momentum (ROC).
+    """
+    df = df.copy()
+    series = df['Close']
+    
+    roc = series.pct_change(periods=base_length) * 100
+    norm_roc = np.clip(abs(roc) / 5, 0.2, 1.0)
+    dyn_len = base_length * (1.5 - norm_roc)
+    dyn_len = np.clip(dyn_len.fillna(base_length), 5, base_length * 2)
+    
+    alpha = smoothing / (dyn_len + 1)
+    
+    dma = [series.iloc[0]]
+    for i in range(1, len(series)):
+        dma_val = alpha.iloc[i] * series.iloc[i] + (1 - alpha.iloc[i]) * dma[-1]
+        dma.append(dma_val)
+    
+    df['DMA'] = pd.Series(dma, index=series.index)
+    return df
+
+def apply_dma_bands(df, dma_length=13, atr_length=14, multiplier=2):
+    """
+    DMA Bands: Dynamic bands using ATR around the faster DMA.
+    Width expands/contracts with volatility.
+    """
+    df = df.copy()
+    
+    # 1. Ensure DMA is calculated first
+    if 'DMA' not in df.columns:
+        df = apply_dma(df, base_length=dma_length)
+        
+    # 2. Calculate ATR using custom exponential weighting logic
+    high = df['High']
+    low = df['Low']
+    close = df['Close']
+    
+    tr = pd.DataFrame(index=df.index)
+    tr['h_l'] = high - low
+    tr['h_pc'] = abs(high - close.shift(1))
+    tr['l_pc'] = abs(low - close.shift(1))
+    tr['tr'] = tr[['h_l', 'h_pc', 'l_pc']].max(axis=1)
+    
+    atr = tr['tr'].ewm(span=atr_length, min_periods=atr_length).mean()
+    
+    # 3. Build Upper, Lower, and Mid Bands
+    df['DMA_Upper'] = df['DMA'] + (multiplier * atr)
+    df['DMA_Lower'] = df['DMA'] - (multiplier * atr)
+    df['DMA_Mid'] = df['DMA']
+    
+    return df
