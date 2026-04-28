@@ -10,7 +10,6 @@ from utils.indicators import (
     apply_rsi_divergence, 
     apply_macd, 
     apply_corrected_qwma, 
-    apply_advanced_trendlines,
     apply_jma,
     apply_natural_moving_average,
     apply_natural_market_channel
