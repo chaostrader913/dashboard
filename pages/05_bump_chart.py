@@ -5,7 +5,11 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import plotly.express as px
 import plotly.graph_objects as go
+import matplotlib
 import warnings
+
+# Force a non-interactive backend for server stability
+matplotlib.use('Agg')
 
 # --- IMPORT GLOBALS ---
 from utils.data_loader import fetch_data
@@ -14,6 +18,7 @@ from utils.indicators import apply_td_sequential, apply_rsi_divergence
 # Suppress warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*MOVING Averages IGNORED.*")
+warnings.filterwarnings("ignore", message=".*not compatible with tight_layout.*")
 
 st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
 st.caption("STATIC SNAPSHOT ENGINE // BIRD'S EYE VIEW")
@@ -62,8 +67,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
 
         kwargs = dict(
             type=mpf_type, style=current_style, show_nontrading=False, returnfig=True,
-            title=f"{name} ({ticker})", figsize=(5, 3.2), 
-            tight_layout=False 
+            title=f"{name} ({ticker})", figsize=(5, 3.2)
         )
         
         if show_sma and mpf_type not in ['renko', 'pnf']: kwargs['mav'] = (20,)
@@ -73,16 +77,19 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
 
         apds = []
         if mpf_type not in ['renko', 'pnf']:
+            # 1. TDSQ Signals (Changed to standard markers to avoid font rendering crashes)
             if show_tdsq and 'Setup_Signal' in data.columns:
                 b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
                 s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
                 b13 = np.where(data['Countdown_Signal'] == 1, data['Low'] * 0.96, np.nan)
                 s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.04, np.nan)
                 
-                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
-                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
-                if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
-                if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
+                # Setup (9) = Circles
+                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker='o', color='#00FFAA', markersize=30))
+                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker='o', color='#00FFAA', markersize=30))
+                # Countdown (13) = Stars
+                if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker='*', color='#FF4B4B', markersize=70))
+                if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker='*', color='#FF4B4B', markersize=70))
 
             if show_rsi and 'Signal' in data.columns:
                 rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.95, np.nan)
@@ -93,7 +100,9 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         fig, axlist = mpf.plot(data, **kwargs)
         
         if style == 'nightclouds': fig.patch.set_facecolor('#0E1117')
-        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
+        
+        # Avoid tight_layout; use subplots_adjust for title safety
+        fig.subplots_adjust(top=0.82, bottom=0.15, left=0.1, right=0.9, hspace=0, wspace=0)
         return fig
         
     else:
@@ -112,7 +121,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 
         ax.tick_params(axis='x', rotation=45, labelsize=8)
         ax.tick_params(axis='y', labelsize=8)
-        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
+        fig.subplots_adjust(top=0.82, bottom=0.2, left=0.15, right=0.9)
         return fig
 
 def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel, style, lookback_months, highlight_name):
@@ -126,7 +135,6 @@ def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel,
 
     ranks = rolling_return.rank(axis=1, ascending=False, method='min')
     
-    # Slice to match the UI timeframe
     slice_map = {'1mo': 3, '3mo': 4, '6mo': 7, '1y': 13, '2y': 25}
     slice_n = slice_map.get(period_sel, len(ranks))
     ranks = ranks.iloc[-slice_n:]
@@ -141,7 +149,6 @@ def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel,
     bg_color = '#0E1117' if is_dark else 'white'
     text_color = 'white' if is_dark else 'black'
     
-    # Setup color palette
     default_colors = px.colors.qualitative.Plotly if is_dark else px.colors.qualitative.D3
     accent_color = '#00FFAA' if is_dark else '#D62728' 
     grey_color = 'rgba(255, 255, 255, 0.15)' if is_dark else 'rgba(0, 0, 0, 0.12)'
@@ -150,16 +157,13 @@ def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel,
     names = list(df_melted['Name'].unique())
     is_highlight_mode = (highlight_name != "None (Show All)")
     
-    # Ensure highlighted trace is drawn LAST so it sits perfectly on top of grey lines
     if is_highlight_mode and highlight_name in names:
         names.remove(highlight_name)
         names.append(highlight_name)
 
-    # Build traces manually for complete styling control
     for idx, name in enumerate(names):
         ticker_data = df_melted[df_melted['Name'] == name]
         
-        # Determine styling based on mode
         if is_highlight_mode:
             if name == highlight_name:
                 line_color = accent_color
@@ -191,8 +195,6 @@ def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel,
             hoverinfo='name+x+y'
         ))
         
-        # Add annotation at the end of the line
-        # Only label the highlighted one, OR all of them if nothing is highlighted
         if show_marker or not is_highlight_mode: 
             last_row = ticker_data.iloc[-1]
             fig.add_annotation(
@@ -232,18 +234,15 @@ def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel,
             tickformat="%b\n%Y",
             showline=False
         ),
-        showlegend=False, # Dropped legend entirely to rely on the clean annotations
+        showlegend=False,
         hovermode="x unified",
         margin=dict(l=60, r=140, t=80, b=40) 
     )
     
     st.plotly_chart(fig, use_container_width=True)
 
-
-# --- Fragment for the Bump Chart & Controls ---
 @st.fragment
 def render_bump_chart_ui(tickers, group_name, period_sel, style_sel):
-    # 1. Fetch data once
     all_close_data = {}
     with st.spinner(f"Processing data for {group_name} Bump Chart..."):
         for ticker in tickers.keys():
@@ -265,7 +264,6 @@ def render_bump_chart_ui(tickers, group_name, period_sel, style_sel):
         
     resampled = resampled.dropna(how='all').ffill().bfill()
     
-    # 2. Interactive Chart Controls layout
     c1, c2 = st.columns([1, 2])
     with c1:
         lookback_sel = st.pills(
@@ -285,8 +283,6 @@ def render_bump_chart_ui(tickers, group_name, period_sel, style_sel):
         )
 
     safe_lookback = lookback_sel if lookback_sel else 3 
-    
-    # 3. Render Chart
     plot_bump_chart_plotly(resampled, tickers, group_name, period_sel, style_sel, safe_lookback, highlight_sel)
 
 
@@ -308,7 +304,7 @@ with st.sidebar:
     sma_check = st.checkbox('20 SMA', value=True)
     vol_check = st.checkbox('VOLUME', value=True)
     
-    tdsq_check = st.checkbox('TDSQ (9 & 13)', value=True)
+    tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
     rsi_check = st.checkbox('RSI DIVERGENCE', value=True)
     
     st.divider()
@@ -320,14 +316,11 @@ tabs = st.tabs(list(TICKER_GROUPS.keys()))
 
 for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
     with tab:
-        
-        # --- BUMP CHART EXPANDER ---
         with st.expander(f"📊 View {group_name} Performance Bump Chart", expanded=False):
             render_bump_chart_ui(tickers, group_name, period_sel, style_sel)
             
         st.divider()
         
-        # --- GRID PLOTS ---
         cols = st.columns(cols_count)
         for i, (ticker, name) in enumerate(tickers.items()):
             with cols[i % cols_count]:
@@ -349,7 +342,9 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                             except: pass
                             
                         fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
-                        st.pyplot(fig)
+                        
+                        # Updated plotting call for 2026 compliance
+                        st.pyplot(fig, width='stretch')
                         plt.close(fig) 
                     else:
                         st.error(f"ERR: {ticker}")
