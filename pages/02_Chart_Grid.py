@@ -4,6 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import warnings
+import matplotlib
+
+# Force a non-interactive backend for server stability
+matplotlib.use('Agg')
 
 # --- IMPORT GLOBALS ---
 from utils.data_loader import fetch_data
@@ -12,16 +16,7 @@ from utils.indicators import apply_td_sequential, apply_rsi_divergence
 # Suppress warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*MOVING Averages IGNORED.*")
-
-# --- 1. Terminal UI & CSS Overrides ---
-# st.markdown("""
-# <style>
-#     .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
-#     div[data-testid="column"] { padding: 2px !important; }
-#     div[data-testid="stHorizontalBlock"] { gap: 0rem !important; }
-#     div[data-testid="stTabs"] { gap: 0rem !important; }
-# </style>
-# """, unsafe_allow_html=True)
+warnings.filterwarnings("ignore", message=".*not compatible with tight_layout.*")
 
 st.markdown("### 🌐 MODULE: MACRO MARKET GRID")
 st.caption("STATIC SNAPSHOT ENGINE // BIRD'S EYE VIEW")
@@ -70,8 +65,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
 
         kwargs = dict(
             type=mpf_type, style=current_style, show_nontrading=False, returnfig=True,
-            title=f"{name} ({ticker})", figsize=(5, 3.2), 
-            tight_layout=False # We handle the layout manually below to protect the title
+            title=f"{name} ({ticker})", figsize=(5, 3.2)
         )
         
         if show_sma and mpf_type not in ['renko', 'pnf']: kwargs['mav'] = (20,)
@@ -82,18 +76,20 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         # --- SIGNAL OVERLAYS ---
         apds = []
         if mpf_type not in ['renko', 'pnf']:
-            # 1. TDSQ Signals (Green for 9, Red for 13)
+            # 1. TDSQ Signals (Using standard markers to avoid font crashes)
             if show_tdsq and 'Setup_Signal' in data.columns:
                 b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
                 s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
                 b13 = np.where(data['Countdown_Signal'] == 1, data['Low'] * 0.96, np.nan)
                 s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.04, np.nan)
                 
-                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
-                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker=r'$9$', color='#00FFAA', markersize=40))
+                # Setup (9) = Circles
+                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker='o', color='#00FFAA', markersize=30))
+                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker='o', color='#00FFAA', markersize=30))
                 
-                if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
-                if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker=r'$13$', color='#FF4B4B', markersize=60))
+                # Countdown (13) = Stars
+                if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker='*', color='#FF4B4B', markersize=70))
+                if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker='*', color='#FF4B4B', markersize=70))
 
             # 2. RSI Divergence Signals
             if show_rsi and 'Signal' in data.columns:
@@ -106,9 +102,8 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         
         if style == 'nightclouds': fig.patch.set_facecolor('#0E1117')
         
-        # Protect the title and right-side axis labels
-        # top=0.88 reserves the top 12% of the image exclusively for the title
-        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
+        # Manually adjust subplots to leave room for the title without using tight_layout
+        fig.subplots_adjust(top=0.82, bottom=0.15, left=0.1, right=0.9, hspace=0, wspace=0)
         return fig
         
     else:
@@ -128,7 +123,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 
         ax.tick_params(axis='x', rotation=45, labelsize=8)
         ax.tick_params(axis='y', labelsize=8)
-        fig.tight_layout(pad=1.0, w_pad=0.5, h_pad=0.5, rect=[0, 0.03, 1, 0.88])
+        fig.subplots_adjust(top=0.82, bottom=0.2, left=0.15, right=0.9)
         return fig
 
 # --- 4. Sidebar Controls ---
@@ -149,8 +144,7 @@ with st.sidebar:
     sma_check = st.checkbox('20 SMA', value=True)
     vol_check = st.checkbox('VOLUME', value=True)
     
-    # Changed value=True so these run automatically
-    tdsq_check = st.checkbox('TDSQ (9 & 13)', value=True)
+    tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
     rsi_check = st.checkbox('RSI DIVERGENCE', value=True)
     
     st.divider()
@@ -168,23 +162,19 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     data = fetch_data(ticker=ticker, interval=interval_sel, period=period_sel, custom_days=day_slider)
                     
                     if data is not None and not data.empty:
-                        # FIX: Flatten MultiIndex columns if they exist
                         if isinstance(data.columns, pd.MultiIndex):
                             data.columns = data.columns.get_level_values(0)
                 
-                        # Remove any potential duplicate indices
                         data = data.loc[~data.index.duplicated(keep='first')]
-                        # Apply indicators if selected
                         if tdsq_check:
                             data = apply_td_sequential(data)
                         if rsi_check:
                             data = apply_rsi_divergence(data)
                             
-                        # Pass 'name' back into the plot function so it builds the title
                         fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
-                        st.pyplot(fig)
+                        
+                        # Updated plotting call for 2026 Streamlit compliance
+                        st.pyplot(fig, width='stretch')
                         plt.close(fig) 
                     else:
                         st.error(f"ERR: {ticker}")
-
-
