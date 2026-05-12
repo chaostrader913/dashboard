@@ -316,3 +316,38 @@ with col1:
     )
     
     st.plotly_chart(fig_spectrum, use_container_width=True)
+import scipy.signal as signal
+
+# --- Wavelet Scalogram Section ---
+st.divider()
+st.subheader("Wavelet Scalogram (Time-Frequency Analysis)")
+
+# Define scales to match your cycle lengths (10 to 400)
+widths = np.arange(10, 400)
+
+# Calculate CWT using the Morlet wavelet
+# We use w=2*pi so that Scale roughly equals Period
+cwt_matrix = signal.cwt(df["Detrended"], signal.morlet2, widths, w=6.28)
+magnitude = np.abs(cwt_matrix)
+
+fig_scalogram = go.Figure()
+
+fig_scalogram.add_trace(go.Heatmap(
+    x=df["Date"],
+    y=widths,
+    z=magnitude,
+    colorscale='Viridis',
+    colorbar=dict(title="Strength"),
+    hovertemplate="Date: %{x}<br>Cycle Len: %{y} bars<br>Strength: %{z:.2f}<extra></extra>"
+))
+
+fig_scalogram.update_layout(
+    title="Price Scalogram: Cycle Strength Over Time",
+    xaxis_title="Date",
+    yaxis_title="Cycle Length (Bars)",
+    height=500,
+    template="plotly_white",
+    yaxis=dict(type='linear') # You can change to 'log' for better macro views
+)
+
+st.plotly_chart(fig_scalogram, use_container_width=True)
