@@ -3,14 +3,13 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import statsmodels.api as sm
 from scipy.signal import find_peaks
-import pywt  # Professional Wavelet library
+import statsmodels.api as sm
 
 # ---------------------------------------------------------
 # Page Configuration
 # ---------------------------------------------------------
-st.set_page_config(layout="wide", page_title="Cycle Scanner + PyWavelets")
+st.set_page_config(layout="wide", page_title="Cycle Scanner")
 st.title("Cycle Scanner Dashboard")
 
 # ---------------------------------------------------------
@@ -30,8 +29,10 @@ col_slider1, col_slider2 = st.columns(2)
 with col_slider1:
     st_threshold = st.slider("Stability Threshold (Genuine %)", min_value=0.0, max_value=1.0, value=0.40, step=0.01)
 with col_slider2:
+    # Lambda controls the flexibility of the HP Filter trendline. 
+    # Lower values remove macro-trends (fixing the skewed ~255 peaks).
     hp_lambda = st.select_slider(
-        "Detrending HP Lambda", 
+        "Detrending HP Lambda (Lower = Removes Macro Trends)", 
         options=[1e5, 1e6, 1e7, 1e8, 1e9, 1e10], 
         value=1e8
     )
@@ -40,67 +41,56 @@ st.divider()
 @st.cache_data(ttl=3600)
 def fetch_data(t, start, end):
     df = yf.download(t, start=start, end=end)
-    if df.empty: return pd.DataFrame()
+    if df.empty:
+        return pd.DataFrame()
+    
     if isinstance(df.columns, pd.MultiIndex):
         df = df['Close'].iloc[:, [0]].copy() 
         df.columns = ['Close']
     else:
         df = df[['Close']]
+        
     df = df.dropna()
     df.reset_index(inplace=True)
-    df.rename(columns={'Close': 'Price', 'Date': 'Date'}, inplace=True)
+    df.rename(columns={'Close': 'Price', 'index': 'Date', 'Date': 'Date'}, inplace=True)
     return df
 
 def process_csv(file):
     df = pd.read_csv(file)
     date_col = next((col for col in df.columns if 'date' in col.lower()), df.columns[0])
     close_col = next((col for col in df.columns if 'close' in col.lower() or '收盘' in col), df.columns[-1])
+    
     df = df[[date_col, close_col]].copy()
     df.columns = ['Date', 'Price']
     df['Date'] = pd.to_datetime(df['Date'])
+    
     df = df.sort_values(by='Date').reset_index(drop=True)
     return df
 
+# Determine data source
 if uploaded_file is not None:
     df = process_csv(uploaded_file)
+    st.success(f"Loaded {len(df)} rows from {uploaded_file.name}")
 else:
     df = fetch_data(ticker, start_date, end_date)
 
 if df.empty or len(df) < 50:
-    st.error("Not enough data found.")
+    st.error("Not enough data found. Please check your ticker or upload a valid CSV with at least 50 bars.")
     st.stop()
 
-# Detrending via HP Filter
-cycle_comp, _ = sm.tsa.filters.hpfilter(df["Price"], lamb=hp_lambda)
+# Detrending with user-controlled Lambda
+cycle_comp, trend_comp = sm.tsa.filters.hpfilter(df["Price"], lamb=hp_lambda)
 df["Detrended"] = cycle_comp
 
 # ---------------------------------------------------------
-# 2. Wavelet Scalogram (PyWavelets Implementation)
-# ---------------------------------------------------------
-# We use Complex Morlet 'cmor1.5-1.0'
-# 1.5 is the bandwidth, 1.0 is the center frequency
-wavelet = 'cmor1.5-1.0' 
-
-# Define cycle lengths (periods) we want to see on the Y-axis
-periods = np.linspace(10, 400, 100)
-
-# Convert periods to scales for pywt.cwt
-# Formula: scale = (center_frequency) / (frequency * sampling_period)
-# Since period = 1/frequency and we use center_freq=1.0 and sampling_period=1.0:
-scales = periods 
-
-# Compute Continuous Wavelet Transform
-coef, freqs = pywt.cwt(df["Detrended"], scales, wavelet)
-magnitude = np.abs(coef)
-
-# ---------------------------------------------------------
-# 3. Cycle Detection logic
+# 2, 3, 4. High-Resolution Cycle Detection & Validation
 # ---------------------------------------------------------
 def analyze_cycles(data, min_len=10, max_len=400):
     n = len(data)
     t_full = np.arange(n)
-    lengths = np.arange(min_len, max_len + 1)
+    
     spectrum_amps = []
+    lengths = np.arange(min_len, max_len + 1)
     
     for L in lengths:
         omega = 2 * np.pi / L
@@ -109,106 +99,220 @@ def analyze_cycles(data, min_len=10, max_len=400):
         
     spectrum_amps = np.array(spectrum_amps)
     full_spectrum_df = pd.DataFrame({"Len": lengths, "Amp": spectrum_amps})
+    
     peak_indices, _ = find_peaks(spectrum_amps)
     
     cycles = []
+    actual_max_len = n // 3 
+    
     for idx in peak_indices:
         length = lengths[idx]
         amp = spectrum_amps[idx]
-        if length > n // 3: continue
         
+        if length > actual_max_len:
+            continue
+            
         omega = 2 * np.pi / length
-        last_chunk = data.values[-int(length):]
-        t_last = np.arange(-len(last_chunk) + 1, 1) 
-        last_dft = (2 / len(last_chunk)) * np.sum(last_chunk * np.exp(-1j * omega * t_last))
+        
+        # --- FIXED: Phase Extraction aligned strictly to the last bar ---
+        last_chunk = data.values[-length:]
+        # By setting t=0 to the last bar, the phase becomes perfectly anchored for projection
+        t_last = np.arange(-length + 1, 1) 
+        last_dft = (2 / length) * np.sum(last_chunk * np.exp(-1j * omega * t_last))
         current_phase = np.angle(last_dft)
         
-        n_chunks = n // int(length)
-        stability = 0.0
+        # --- FIXED: Bartels Stability chunking backwards from the present ---
+        n_chunks = n // length
         if n_chunks >= 3:
             chunk_phases = []
-            for i in range(n_chunks):
-                chunk = data.values[n-(i+1)*int(length):n-i*int(length)]
-                t_chunk = np.arange(-len(chunk)+1, 1)
-                dft = (2/len(chunk)) * np.sum(chunk * np.exp(-1j * omega * t_chunk))
-                chunk_phases.append(np.angle(dft))
-            stability = np.abs(np.sum(np.exp(1j * np.array(chunk_phases)))) / n_chunks
+            for c in range(n_chunks):
+                # Always anchor chunks to the most recent data
+                start_idx = n - (c + 1) * length
+                end_idx = n - c * length
+                chunk = data.values[start_idx : end_idx]
+                
+                t_chunk = np.arange(-length + 1, 1)
+                chunk_dft = (2 / length) * np.sum(chunk * np.exp(-1j * omega * t_chunk))
+                chunk_phases.append(np.angle(chunk_dft))
             
-        is_bullish = (amp * np.cos(omega * 1 + current_phase)) > (amp * np.cos(current_phase))
-        cycles.append({"Len": int(length), "Amp": round(amp, 2), "Stab": round(stability, 2), "Phase": current_phase, "Bullish": is_bullish})
+            plv = np.abs(np.sum(np.exp(1j * np.array(chunk_phases)))) / n_chunks
+            stability = plv
+        else:
+            stability = 0.0
             
-    return pd.DataFrame(cycles), full_spectrum_df
+        # Direction determined by next single step relative to anchored phase
+        curr_val = amp * np.cos(current_phase)
+        next_val = amp * np.cos(omega * 1 + current_phase)
+        is_bullish = next_val > curr_val
+        
+        strength = amp / length
+        
+        cycles.append({
+            "Len": int(length),
+            "Amp": round(amp, 2),
+            "Strg": round(strength, 4),
+            "Stab": round(stability, 2),
+            "Phase": current_phase,
+            "Bullish": is_bullish
+        })
+            
+    if not cycles:
+        return pd.DataFrame(), full_spectrum_df
+    
+    cycles_df = pd.DataFrame(cycles)
+    valid_cycles = cycles_df[cycles_df["Stab"] >= st_threshold].copy()
+    
+    if valid_cycles.empty:
+        st.warning(f"No cycles passed the {st_threshold*100}% threshold. Displaying the top 5 most stable cycles instead.")
+        valid_cycles = cycles_df.sort_values(by="Stab", ascending=False).head(5).copy()
+    
+    valid_cycles = valid_cycles.sort_values(by="Stab", ascending=False).reset_index(drop=True)
+    
+    return valid_cycles, full_spectrum_df
 
 analyzed_cycles, full_spectrum_df = analyze_cycles(df["Detrended"])
 
+if analyzed_cycles.empty:
+    st.error("Not enough data to calculate any cycles.")
+    st.stop()
+
+analyzed_cycles.insert(0, "Select", False)
+analyzed_cycles.loc[0:min(2, len(analyzed_cycles)-1), "Select"] = True
+
 # ---------------------------------------------------------
-# 4. UI & Composite Projection
+# Layout & UI
 # ---------------------------------------------------------
 col1, col2 = st.columns([3, 1])
 
 with col2:
-    st.subheader("Detected Cycles")
-    if not analyzed_cycles.empty:
-        analyzed_cycles.insert(0, "Select", False)
-        analyzed_cycles.loc[0:1, "Select"] = True 
-        edited_cycles = st.data_editor(analyzed_cycles[["Select", "Len", "Stab"]], hide_index=True)
-        selected_lens = edited_cycles[edited_cycles["Select"]]["Len"].tolist()
-        active_cycles = analyzed_cycles[analyzed_cycles["Len"].isin(selected_lens)]
-    else:
-        active_cycles = pd.DataFrame()
+    st.subheader("Cycle Spectrum Data")
+    
+    display_cols = ["Select", "Len", "Amp", "Strg", "Stab", "Bullish"]
+    df_display = analyzed_cycles[display_cols]
 
+    def build_style_matrix(style_df):
+        matrix = pd.DataFrame('', index=style_df.index, columns=style_df.columns)
+        for idx in style_df.index:
+            if style_df.loc[idx, 'Bullish']:
+                matrix.loc[idx, 'Len'] = 'background-color: #4CAF50; color: white; font-weight: bold; text-align: center;'
+            else:
+                matrix.loc[idx, 'Len'] = 'background-color: #F44336; color: white; font-weight: bold; text-align: center;'
+        return matrix
+
+    styled_table = df_display.style.apply(build_style_matrix, axis=None)
+
+    edited_cycles = st.data_editor(
+        styled_table,
+        hide_index=True,
+        disabled=["Len", "Amp", "Strg", "Stab", "Bullish"], 
+        column_config={
+            "Select": st.column_config.CheckboxColumn("✔️", default=False), 
+            "Bullish": None 
+        },
+        use_container_width=True
+    )
+
+# ---------------------------------------------------------
+# Composite Projection Math
+# ---------------------------------------------------------
+selected_rows = edited_cycles[edited_cycles["Select"] == True]
+active_cycles = analyzed_cycles[analyzed_cycles["Len"].isin(selected_rows["Len"])]
+
+future_bars = 100
+total_bars = len(df) + future_bars
+composite_wave = np.zeros(total_bars)
+
+for _, row in active_cycles.iterrows():
+    length = row["Len"]
+    amp = row["Amp"]
+    phase = row["Phase"] 
+    omega = 2 * np.pi / length
+    # Phase perfectly anchored to the end of history
+    x_range = np.arange(total_bars) - (len(df) - 1) 
+    wave = amp * np.cos(omega * x_range + phase)
+    composite_wave += wave
+
+if len(active_cycles) > 0:
+    comp_min, comp_max = composite_wave.min(), composite_wave.max()
+    price_min, price_max = df["Price"].min(), df["Price"].max()
+    
+    if comp_max != comp_min:
+        price_mid = (price_max + price_min) / 2
+        comp_mid = (comp_max + comp_min) / 2
+        scale_factor = (price_max - price_min) * 0.85 / (comp_max - comp_min)
+        composite_wave_scaled = ((composite_wave - comp_mid) * scale_factor) + price_mid
+    else:
+        composite_wave_scaled = np.full(total_bars, (price_max + price_min) / 2)
+else:
+    composite_wave_scaled = np.full(total_bars, np.nan)
+
+last_date = df["Date"].iloc[-1]
+future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=future_bars)
+all_dates = pd.concat([df["Date"], pd.Series(future_dates)]).reset_index(drop=True)
+
+# ---------------------------------------------------------
+# Chart Rendering
+# ---------------------------------------------------------
 with col1:
-    future_bars = 100
-    total_bars = len(df) + future_bars
-    composite_wave = np.zeros(total_bars)
-    for _, row in active_cycles.iterrows():
-        x_range = np.arange(total_bars) - (len(df) - 1)
-        composite_wave += row["Amp"] * np.cos((2 * np.pi / row["Len"]) * x_range + row["Phase"])
-
-    if len(active_cycles) > 0:
-        p_min, p_max = df["Price"].min(), df["Price"].max()
-        c_min, c_max = composite_wave.min(), composite_wave.max()
-        composite_wave_scaled = ((composite_wave - ((c_max+c_min)/2)) * ((p_max-p_min)*0.8 / (c_max-c_min or 1))) + ((p_max+p_min)/2)
-    else:
-        composite_wave_scaled = np.full(total_bars, np.nan)
-
-    all_dates = pd.concat([df["Date"], pd.Series(pd.bdate_range(df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=future_bars))]).reset_index(drop=True)
-
-    # ---------------------------------------------------------
-    # 5. Final Charting
-    # ---------------------------------------------------------
+    chart_title = uploaded_file.name if uploaded_file else ticker
     fig_main = go.Figure()
     
-    # 1. Background Scalogram (Layered behind price)
-    fig_main.add_trace(go.Heatmap(
-        x=df["Date"], 
-        y=periods, 
-        z=magnitude, 
-        colorscale='Viridis', 
-        opacity=0.3, 
-        yaxis='y2', 
-        showscale=False, 
-        zsmooth='best',
-        name='Scalogram (Energy)'
+    fig_main.add_trace(go.Scatter(
+        x=df["Date"], y=df["Price"], mode='lines', name='Price', 
+        line=dict(color='#2B4A6F', width=1.5)
     ))
     
-    # 2. Historical Price
-    fig_main.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name='Price', line=dict(color='black', width=1.5)))
+    fig_main.add_trace(go.Scatter(
+        x=all_dates, y=composite_wave_scaled, mode='lines', name='Composite Projection', 
+        line=dict(color='#D81B60', width=2, shape='spline') 
+    ))
     
-    # 3. Cycle Projection
-    fig_main.add_trace(go.Scatter(x=all_dates, y=composite_wave_scaled, name='Projection', line=dict(color='#D81B60', width=2)))
-
     fig_main.update_layout(
-        template="plotly_white", height=650,
-        yaxis=dict(title="Price", side="left"),
-        yaxis2=dict(
-            title="Cycle Length (Bars)", 
-            overlaying='y', 
-            side='right', 
-            range=[10, 400], 
-            showgrid=False
-        ),
-        margin=dict(l=20, r=20, t=40, b=20),
-        legend=dict(orientation="h", y=1.05)
+        title=f"{chart_title} Price and Composite Cycle", 
+        xaxis_title="Date", yaxis_title="Price", 
+        template="plotly_white", height=500, 
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 
+        margin=dict(l=20, r=20, t=60, b=10)
     )
+    fig_main.add_vline(x=last_date.timestamp() * 1000, line_width=1, line_dash="dash", line_color="grey")
     st.plotly_chart(fig_main, use_container_width=True)
+
+    fig_spectrum = go.Figure()
+
+    fig_spectrum.add_trace(go.Scatter(
+        x=full_spectrum_df["Len"], 
+        y=full_spectrum_df["Amp"],
+        fill='tozeroy', 
+        mode='lines',
+        line=dict(color='#2B4A6F', width=1),
+        fillcolor='rgba(140, 158, 186, 0.4)',
+        name='Full Spectrum'
+    ))
+
+    bullish_peaks = analyzed_cycles[analyzed_cycles["Bullish"] == True]
+    if not bullish_peaks.empty:
+        fig_spectrum.add_trace(go.Scatter(
+            x=bullish_peaks["Len"], y=bullish_peaks["Amp"], 
+            mode='markers', name='Bullish Cycle', 
+            marker=dict(symbol='triangle-up', color='#4CAF50', size=12, line=dict(width=1, color='darkgreen'))
+        ))
+
+    bearish_peaks = analyzed_cycles[analyzed_cycles["Bullish"] == False]
+    if not bearish_peaks.empty:
+        fig_spectrum.add_trace(go.Scatter(
+            x=bearish_peaks["Len"], y=bearish_peaks["Amp"], 
+            mode='markers', name='Bearish Cycle', 
+            marker=dict(symbol='triangle-down', color='#F44336', size=12, line=dict(width=1, color='darkred'))
+        ))
+
+    fig_spectrum.update_layout(
+        title="Cycle Spectrum Periodogram",
+        xaxis_title="Cycle Length (Bars)", 
+        yaxis_title="Amplitude",
+        template="plotly_white", 
+        height=350,
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(range=[0, 420]) 
+    )
+    
+    st.plotly_chart(fig_spectrum, use_container_width=True)
