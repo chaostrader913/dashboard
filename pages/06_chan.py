@@ -3,7 +3,8 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from scipy.signal import find_peaks, cwt, morlet2
+from scipy.signal import find_peaks
+import pywt
 import statsmodels.api as sm
 
 # ---------------------------------------------------------
@@ -80,7 +81,7 @@ df["Detrended"] = cycle_comp
 widths = np.linspace(10, 400, 100)
 
 # FIXED: Using lambda to pass 'w' to morlet2
-cwt_matrix = cwt(df["Detrended"], lambda M, s: morlet2(M, s, w=6.28), widths)
+cwt_matrix = pwt.cwt(df["Detrended"], lambda M, s: morlet2(M, s, w=6.28), widths)
 magnitude = np.abs(cwt_matrix)
 
 # ---------------------------------------------------------
