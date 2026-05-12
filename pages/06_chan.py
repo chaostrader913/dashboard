@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, cwt
 import statsmodels.api as sm
 
 # ---------------------------------------------------------
@@ -316,7 +316,7 @@ with col1:
     )
     
     st.plotly_chart(fig_spectrum, use_container_width=True)
-import scipy.signal as signal
+
 
 # --- Wavelet Scalogram Section ---
 st.divider()
@@ -327,7 +327,7 @@ widths = np.arange(10, 400)
 
 # Calculate CWT using the Morlet wavelet
 # We use w=2*pi so that Scale roughly equals Period
-cwt_matrix = signal.cwt(df["Detrended"], signal.morlet2, widths, w=6.28)
+cwt_matrix = cwt(df["Detrended"], morlet2, widths, w=6.28)
 magnitude = np.abs(cwt_matrix)
 
 fig_scalogram = go.Figure()
