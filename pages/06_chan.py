@@ -81,7 +81,7 @@ df["Detrended"] = cycle_comp
 widths = np.linspace(10, 400, 100)
 
 # FIXED: Using lambda to pass 'w' to morlet2
-cwt_matrix = pwt.cwt(df["Detrended"], lambda M, s: morlet2(M, s, w=6.28), widths)
+cwt_matrix = pywt.cwt(df["Detrended"], lambda M, s: morlet2(M, s, w=6.28), widths)
 magnitude = np.abs(cwt_matrix)
 
 # ---------------------------------------------------------
