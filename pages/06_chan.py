@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from scipy.signal import find_peaks, cwt
+from scipy.signal import find_peaks
 import statsmodels.api as sm
 
 # ---------------------------------------------------------
@@ -253,9 +253,32 @@ all_dates = pd.concat([df["Date"], pd.Series(future_dates)]).reset_index(drop=Tr
 # ---------------------------------------------------------
 # Chart Rendering
 # ---------------------------------------------------------
+import scipy.signal as signal
+
+# 1. Define cycle lengths to scan (match your analysis range)
+widths = np.arange(10, 400)
+
+# 2. Compute CWT using the Morlet wavelet
+# w=6.28 (2*pi) makes 'width' roughly equal to 'cycle period'
+cwt_matrix = signal.cwt(df["Detrended"], signal.morlet2, widths, w=6.28)
+magnitude = np.abs(cwt_matrix)
+
 with col1:
     chart_title = uploaded_file.name if uploaded_file else ticker
     fig_main = go.Figure()
+
+    # ADD THIS: The Scalogram Heatmap
+    fig_main.add_trace(go.Heatmap(
+        x=df["Date"],
+        y=widths,
+        z=magnitude,
+        colorscale='YlGnBu', # "Yellow-Green-Blue" is good for backgrounds
+        opacity=0.4,          # Keep it faint so price stays visible
+        yaxis='y2',          # Link to secondary axis
+        showscale=False,     # Hide the colorbar to save space
+        zsmooth='best',      # Smoother visual
+        name='Scalogram'
+    ))
     
     fig_main.add_trace(go.Scatter(
         x=df["Date"], y=df["Price"], mode='lines', name='Price', 
@@ -267,12 +290,21 @@ with col1:
         line=dict(color='#D81B60', width=2, shape='spline') 
     ))
     
+    # Update layout for the dual Y-axis
     fig_main.update_layout(
-        title=f"{chart_title} Price and Composite Cycle", 
-        xaxis_title="Date", yaxis_title="Price", 
-        template="plotly_white", height=500, 
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 
-        margin=dict(l=20, r=20, t=60, b=10)
+        title=f"{chart_title} Price and Wavelet Scalogram", 
+        xaxis_title="Date", 
+        yaxis_title="Price", 
+        yaxis2=dict(
+            title="Cycle Length (Bars)",
+            overlaying='y',
+            side='right',
+            showgrid=False,
+            range=[10, 400]
+        ),
+        template="plotly_white", 
+        height=600, # Increased height for better visibility
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     fig_main.add_vline(x=last_date.timestamp() * 1000, line_width=1, line_dash="dash", line_color="grey")
     st.plotly_chart(fig_main, use_container_width=True)
