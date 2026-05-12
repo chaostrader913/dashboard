@@ -30,7 +30,7 @@ with col_slider1:
     st_threshold = st.slider("Stability Threshold (Genuine %)", min_value=0.0, max_value=1.0, value=0.40, step=0.01)
 with col_slider2:
     hp_lambda = st.select_slider(
-        "Detrending HP Lambda (Lower = Removes Macro Trends)", 
+        "Detrending HP Lambda", 
         options=[1e5, 1e6, 1e7, 1e8, 1e9, 1e10], 
         value=1e8
     )
@@ -70,21 +70,21 @@ if df.empty or len(df) < 50:
     st.stop()
 
 # Detrending via HP Filter
-cycle_comp, trend_comp = sm.tsa.filters.hpfilter(df["Price"], lamb=hp_lambda)
+cycle_comp, _ = sm.tsa.filters.hpfilter(df["Price"], lamb=hp_lambda)
 df["Detrended"] = cycle_comp
 
 # ---------------------------------------------------------
-# 2. Wavelet Scalogram Calculation
+# 2. Wavelet Scalogram (FIXED LINE)
 # ---------------------------------------------------------
-# Widths represent the cycle lengths we want to visualize
+# Define widths for scanning (10 to 400 bars)
 widths = np.linspace(10, 400, 100)
 
-# The lambda fix ensures w=6.28 is passed correctly to the Morlet wavelet
+# FIXED: Using lambda to pass 'w' to morlet2
 cwt_matrix = cwt(df["Detrended"], lambda M, s: morlet2(M, s, w=6.28), widths)
 magnitude = np.abs(cwt_matrix)
 
 # ---------------------------------------------------------
-# 3. Cycle Detection Logic
+# 3. Cycle Detection logic
 # ---------------------------------------------------------
 def analyze_cycles(data, min_len=10, max_len=400):
     n = len(data)
@@ -114,125 +114,65 @@ def analyze_cycles(data, min_len=10, max_len=400):
         current_phase = np.angle(last_dft)
         
         n_chunks = n // int(length)
+        stability = 0.0
         if n_chunks >= 3:
-            chunk_phases = []
-            for c in range(n_chunks):
-                start_idx = n - (c + 1) * int(length)
-                end_idx = n - c * int(length)
-                chunk = data.values[start_idx : end_idx]
-                t_chunk = np.arange(-len(chunk) + 1, 1)
-                chunk_dft = (2 / len(chunk)) * np.sum(chunk * np.exp(-1j * omega * t_chunk))
-                chunk_phases.append(np.angle(chunk_dft))
+            chunk_phases = [np.angle((2/int(length)) * np.sum(data.values[n-(i+1)*int(length):n-i*int(length)] * np.exp(-1j * omega * np.arange(-int(length)+1, 1)))) for i in range(n_chunks)]
             stability = np.abs(np.sum(np.exp(1j * np.array(chunk_phases)))) / n_chunks
-        else:
-            stability = 0.0
             
         is_bullish = (amp * np.cos(omega * 1 + current_phase)) > (amp * np.cos(current_phase))
-        cycles.append({"Len": int(length), "Amp": round(amp, 2), "Strg": round(amp/length, 4), 
-                       "Stab": round(stability, 2), "Phase": current_phase, "Bullish": is_bullish})
+        cycles.append({"Len": int(length), "Amp": round(amp, 2), "Stab": round(stability, 2), "Phase": current_phase, "Bullish": is_bullish})
             
     return pd.DataFrame(cycles), full_spectrum_df
 
 analyzed_cycles, full_spectrum_df = analyze_cycles(df["Detrended"])
 
 # ---------------------------------------------------------
-# 4. Layout & UI
+# 4. UI & Charting
 # ---------------------------------------------------------
 col1, col2 = st.columns([3, 1])
 
 with col2:
-    st.subheader("Cycle Spectrum")
+    st.subheader("Detected Cycles")
     if not analyzed_cycles.empty:
         analyzed_cycles.insert(0, "Select", False)
-        # Pre-select top 2 most stable cycles
-        analyzed_cycles.loc[0:min(1, len(analyzed_cycles)-1), "Select"] = True
-        
-        edited_cycles = st.data_editor(
-            analyzed_cycles[["Select", "Len", "Stab", "Bullish"]],
-            hide_index=True,
-            column_config={"Select": st.column_config.CheckboxColumn("✔️")},
-            use_container_width=True
-        )
-        selected_rows = edited_cycles[edited_cycles["Select"] == True]
-        active_cycles = analyzed_cycles[analyzed_cycles["Len"].isin(selected_rows["Len"])]
+        analyzed_cycles.loc[0:1, "Select"] = True # Default select top 2
+        edited_cycles = st.data_editor(analyzed_cycles[["Select", "Len", "Stab"]], hide_index=True)
+        selected_lens = edited_cycles[edited_cycles["Select"]]["Len"].tolist()
+        active_cycles = analyzed_cycles[analyzed_cycles["Len"].isin(selected_lens)]
     else:
-        st.warning("No cycles detected.")
         active_cycles = pd.DataFrame()
 
-# ---------------------------------------------------------
-# 5. Composite Projection Math
-# ---------------------------------------------------------
-future_bars = 100
-total_bars = len(df) + future_bars
-composite_wave = np.zeros(total_bars)
-
-for _, row in active_cycles.iterrows():
-    omega = 2 * np.pi / row["Len"]
-    # Anchor to the last historical bar
-    x_range = np.arange(total_bars) - (len(df) - 1) 
-    composite_wave += row["Amp"] * np.cos(omega * x_range + row["Phase"])
-
-if len(active_cycles) > 0:
-    p_min, p_max = df["Price"].min(), df["Price"].max()
-    c_min, c_max = composite_wave.min(), composite_wave.max()
-    if c_max != c_min:
-        # Scale the cycle wave to fit the price panel visually
-        composite_wave_scaled = ((composite_wave - ((c_max+c_min)/2)) * ((p_max-p_min)*0.8 / (c_max-c_min))) + ((p_max+p_min)/2)
-    else: composite_wave_scaled = np.full(total_bars, (p_max+p_min)/2)
-else:
-    composite_wave_scaled = np.full(total_bars, np.nan)
-
-# Generate future dates for the projection
-last_date = df["Date"].iloc[-1]
-future_dates = pd.bdate_range(last_date + pd.Timedelta(days=1), periods=future_bars)
-all_dates = pd.concat([df["Date"], pd.Series(future_dates)]).reset_index(drop=True)
-
-# ---------------------------------------------------------
-# 6. Final Charting
-# ---------------------------------------------------------
 with col1:
-    fig_main = go.Figure()
-    
-    # 1. Scalogram Background (Secondary Y-Axis)
-    # The Viridis/Plasma colorscales show cycle energy intensity
-    fig_main.add_trace(go.Heatmap(
-        x=df["Date"], y=widths, z=magnitude,
-        colorscale='Viridis', opacity=0.35, showscale=False,
-        yaxis='y2', zsmooth='best', name='Scalogram'
-    ))
-    
-    # 2. Historical Price
-    fig_main.add_trace(go.Scatter(
-        x=df["Date"], y=df["Price"], mode='lines', name='Price', 
-        line=dict(color='black', width=1.5)
-    ))
-    
-    # 3. Future Projection
-    fig_main.add_trace(go.Scatter(
-        x=all_dates, y=composite_wave_scaled, mode='lines', name='Cycle Projection', 
-        line=dict(color='#D81B60', width=2) 
-    ))
-    
-    fig_main.update_layout(
-        title=f"{ticker} Price & Cycle Scalogram Overlay",
-        template="plotly_white", height=650,
-        yaxis=dict(title="Price", side="left"),
-        # Secondary axis for the Scalogram widths
-        yaxis2=dict(
-            title="Cycle Length (Bars)", 
-            overlaying='y', 
-            side='right', 
-            range=[10, 400], 
-            showgrid=False
-        ),
-        legend=dict(orientation="h", y=1.05, xanchor="right", x=1)
-    )
-    
-    # Add vertical line for "Today"
-    fig_main.add_vline(x=last_date.timestamp() * 1000, line_dash="dash", line_color="grey")
-    st.plotly_chart(fig_main, use_container_width=True)
+    # Build Composite Projection
+    future_bars = 100
+    total_bars = len(df) + future_bars
+    composite_wave = np.zeros(total_bars)
+    for _, row in active_cycles.iterrows():
+        x_range = np.arange(total_bars) - (len(df) - 1)
+        composite_wave += row["Amp"] * np.cos((2 * np.pi / row["Len"]) * x_range + row["Phase"])
 
-    # Secondary Plot: Full Spectrum
-    fig_spec = go.Figure(go.Scatter(x=full_spectrum_df["Len"], y=full_spectrum_df["Amp"], fill='tozeroy'))
-    fig_spec.update_layout(title="Full Cycle Spectrum (Periodogram)", height=300, xaxis_title="Length", yaxis_title="Amplitude")
-    st.plotly_chart(fig_spec, use_container_width=True)
+    # Scale for Price Panel
+    if len(active_cycles) > 0:
+        p_min, p_max = df["Price"].min(), df["Price"].max()
+        c_min, c_max = composite_wave.min(), composite_wave.max()
+        composite_wave_scaled = ((composite_wave - ((c_max+c_min)/2)) * ((p_max-p_min)*0.8 / (c_max-c_min or 1))) + ((p_max+p_min)/2)
+    else:
+        composite_wave_scaled = np.full(total_bars, np.nan)
+
+    all_dates = pd.concat([df["Date"], pd.Series(pd.bdate_range(df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=future_bars))]).reset_index(drop=True)
+
+    fig_main = go.Figure()
+    # 1. Background Scalogram
+    fig_main.add_trace(go.Heatmap(x=df["Date"], y=widths, z=magnitude, colorscale='Plasma', opacity=0.3, yaxis='y2', showscale=False, zsmooth='best'))
+    # 2. Price
+    fig_main.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name='Price', line=dict(color='black', width=1.5)))
+    # 3. Projection
+    fig_main.add_trace(go.Scatter(x=all_dates, y=composite_wave_scaled, name='Projection', line=dict(color='#D81B60', width=2)))
+
+    fig_main.update_layout(
+        template="plotly_white", height=600,
+        yaxis=dict(title="Price"),
+        yaxis2=dict(title="Cycle Length", overlaying='y', side='right', range=[10, 400], showgrid=False),
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig_main, use_container_width=True)
