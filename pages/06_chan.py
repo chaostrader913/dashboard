@@ -27,7 +27,8 @@ with col_input4:
 
 col_slider1, col_slider2 = st.columns(2)
 with col_slider1:
-    st_threshold = st.slider("Stability Threshold (Genuine %)", min_value=0.0, max_value=1.0, value=0.40, step=0.01)
+    # UPDATED: Set default to 0.49 based on Whitepaper Step 3 recommendations
+    st_threshold = st.slider("Stability Threshold (Genuine %)", min_value=0.0, max_value=1.0, value=0.49, step=0.01)
 with col_slider2:
     # Lambda controls the flexibility of the HP Filter trendline. 
     # Lower values remove macro-trends (fixing the skewed ~255 peaks).
@@ -163,10 +164,12 @@ def analyze_cycles(data, min_len=10, max_len=400):
     valid_cycles = cycles_df[cycles_df["Stab"] >= st_threshold].copy()
     
     if valid_cycles.empty:
-        st.warning(f"No cycles passed the {st_threshold*100}% threshold. Displaying the top 5 most stable cycles instead.")
-        valid_cycles = cycles_df.sort_values(by="Stab", ascending=False).head(5).copy()
+        st.warning(f"No cycles passed the {st_threshold*100}% threshold. Displaying the top 5 strongest cycles instead.")
+        # UPDATED: Sorted by Cycle Strength (Strg) instead of Stability (Stab)
+        valid_cycles = cycles_df.sort_values(by="Strg", ascending=False).head(5).copy()
     
-    valid_cycles = valid_cycles.sort_values(by="Stab", ascending=False).reset_index(drop=True)
+    # UPDATED: Sorted by Cycle Strength (Strg) instead of Stability (Stab) per Whitepaper Step 4
+    valid_cycles = valid_cycles.sort_values(by="Strg", ascending=False).reset_index(drop=True)
     
     return valid_cycles, full_spectrum_df
 
