@@ -11,4 +11,3 @@ plotly
 streamlit-lightweight-charts
 streamlit-autorefresh
 lightweight_charts_v5
-pywt
