@@ -38,18 +38,7 @@ TICKER_GROUPS = {
         'SMH': 'Semiconductors', 'IGV': 'Software', 'XBI': 'Biotech', 'ARKK': 'Innovation', 
         'TAN': 'Solar', 'URA': 'Uranium', 'LIT': 'Lithium', 'PAVE': 'Infrastructure'
     },
-    'International': {
-        'VEA': 'Dev ex-US', 'VWO': 'Emerging Mkts','^STOXX50E':'Euro Stoxx 50',
-        '^GDAXI': 'Germany', '^FTSE': 'UK', '^FCHI':'France',
-        '^NKY': 'Japan', '^KS11': 'Korea','^HSI':'Hang Seng Index',
-        '000001.SS': 'China', 'INDA': 'India', 'EWZ': 'Brazil'
-    },
-    'Fixed Income ETFs & Futures': {
-        'SHY': '1-3Y Treas', 'IEF': '7-10Y Treas', 'TLT': '20Y+ Treas',
-        'LQD': 'Inv. Grade', 'HYG': 'High Yield', 'BND': 'Total Bond', 
-        'MBB': 'MBS ETF', 'TIP': 'TIPS Bond','ZT=F':'T-note 2Y',
-        '^FVX': 'Treasury 5Y','^TNX': 'Treasury 10Y','^TYX': 'Treasury 30Y'
-    },
+  
     'Commodity, Currencies & Crypto': {
         'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil', 
         'HG=F': 'Copper', 'DX-Y.NYB':'Dollar Index',
@@ -58,10 +47,6 @@ TICKER_GROUPS = {
         'CNY=X': 'Dollar Yuan','TWD=X': 'Taiwanese Dollar','HKD=X': 'Hong Kong Dollar',
         'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum','SOL-USD': 'Solana'
     },
-    'Major Stocks by Market Cap': {
-        'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'Nvidia', 'GOOGL': 'Alphabet',
-        'AMZN': 'Amazon', 'META': 'Meta', 'BRK-B': 'Berkshire', 'TSLA': 'Tesla'
-    }
 }
 
 # --- 3. Plotting Engine ---
