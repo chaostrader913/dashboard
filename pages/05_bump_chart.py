@@ -246,7 +246,7 @@ def plot_bump_chart_plotly(resampled_data, tickers_dict, group_name, period_sel,
         margin=dict(l=60, r=140, t=80, b=40) 
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width=True)
 
 @st.fragment
 def render_bump_chart_ui(tickers, group_name, period_sel, style_sel):
