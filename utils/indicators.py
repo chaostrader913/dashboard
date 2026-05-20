@@ -1,350 +1,300 @@
+import streamlit as st
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
-from scipy.signal import argrelextrema
+from streamlit_lightweight_charts import renderLightweightCharts
 
-# --- 1. Standard Indicators (Powered by pandas-ta) ---
-def apply_macd(df, fast=12, slow=26, signal=9):
-    """
-    Calculates MACD using the exact math engine found in TradingView's PineScript.
-    Bypasses pandas-ta to prevent EMA initialization lagging.
-    """
-    df = df.copy()
-    close = df['Close']
+# Import from your utils folder
+from utils.data_loader import fetch_data
+from utils.indicators import (
+    apply_td_sequential, 
+    apply_rsi_divergence, 
+    apply_macd, 
+    apply_corrected_qwma, 
+    apply_jma,
+    apply_natural_moving_average,
+    apply_natural_market_channel
+)
+
+# --- 1. Terminal UI Styling ---
+st.markdown("### 🎛️ MODULE: ADVANCED SIGNAL SCANNER (LW-CHARTS)")
+st.divider()
+
+# --- 2. Command Row (User Inputs) ---
+col1, col2, col3, col4, col5, col6 = st.columns([1.2, 1, 1.2, 2, 2, 1])
+with col1:
+    ticker = st.text_input("TARGET ASSET", value="BTC-USD").upper()
+with col2:
+    timeframe = st.selectbox("TIMEFRAME", options=["1d", "1h", "15m"], index=0)
+with col3:
+    theme_sel = st.selectbox("THEME", ["mike", "nightclouds", "yahoo", "blueskies"], index=0)
+with col4:
+    overlays = st.multiselect(
+        "PRICE OVERLAYS", 
+        options=["TD Sequential", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel"], 
+        default=["TD Sequential", "Corrected QWMA"]
+    )
+with col5:
+    oscillators = st.multiselect(
+        "OSCILLATORS", 
+        options=["RSI Divergence", "MACD"],
+        default=["RSI Divergence"]
+    )
+with col6:
+    use_log = st.checkbox("Logarithmic Scale", value=True) if timeframe == "1d" else False
+    # 🎛️ NEW: Backtest Toggle
+    run_backtest = st.checkbox("Run QWMA Backtest", value=True) if "Corrected QWMA" in overlays else False
+        
+# --- 3. Data Processing & Indicator Application ---
+with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
+    data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1d" else "60d")
+
+if data is None or data.empty:
+    st.error(f"ERR: NO DATA FOUND FOR {ticker}.")
+    st.stop()
+
+# Apply selected mathematical models
+if "TD Sequential" in overlays: data = apply_td_sequential(data)
+if "RSI Divergence" in oscillators: data = apply_rsi_divergence(data)
+if "MACD" in oscillators: data = apply_macd(data)
+if "Jurik MA" in overlays: data = apply_jma(data)
+if "Natural MA" in overlays: data = apply_natural_moving_average(data)
+if "Natural Channel" in overlays: data = apply_natural_market_channel(data)
+
+# 🎛️ NEW: QWMA Backtesting Logic
+if "Corrected QWMA" in overlays: 
+    data = apply_corrected_qwma(data)
     
-    # 1. Calculate Fast and Slow EMAs using pandas ewm (adjust=False matches TV)
-    fast_ema = close.ewm(span=fast, min_periods=fast, adjust=False).mean()
-    slow_ema = close.ewm(span=slow, min_periods=slow, adjust=False).mean()
-    
-    # 2. Calculate MACD Line
-    df['MACD'] = fast_ema - slow_ema
-    
-    # 3. Calculate Signal Line (Wait for MACD to have data before calculating EMA)
-    df['MACD_Signal'] = df['MACD'].ewm(span=signal, min_periods=signal, adjust=False).mean()
-    
-    # 4. Calculate Histogram
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-    
-    return df
+    if run_backtest and 'CQWMA_Color' in data.columns:
+        # 1 = Long (Green), 2 = Short (Red), 0 = Neutral/Hold.
+        # We forward fill to hold the current position until an opposite signal fires.
+        pos = data['CQWMA_Color'].replace(0, np.nan).ffill()
+        pos = pos.replace({1: 1, 2: -1}).fillna(0)
+        
+        # Shift by 1 to prevent lookahead bias (trade occurs AFTER the signal candle closes)
+        data['Position'] = pos.shift(1)
+        
+        # Calculate daily strategy returns vs buy and hold
+        data['Strat_Return'] = data['Position'] * data['Close'].pct_change()
+        
+        # Calculate Equity Curve (Starting with $10,000 capital)
+        data['Equity'] = (1 + data['Strat_Return'].fillna(0)).cumprod() * 10000
 
-def apply_corrected_qwma(df, ma_period=25, ma_speed=2, correction_period=0, fl_period=25, fl_up=90, fl_down=10):
-    """
-    Translates Loxx's exact PineScript Corrected QWMA to Pandas.
-    Includes the Floating Levels and "Middle" color logic.
-    """
-    df = df.copy()
-    close = df['Close']
+def get_time(idx):
+    return int(pd.Timestamp(idx).timestamp())
 
-    # 1. Calculate uncorrected QWMA
-    # PineScript creates weights from oldest to newest: 1^speed, 2^speed ... (period-1)^speed, 2*(period^speed)
-    weights = np.array([i**ma_speed for i in range(1, ma_period)] + [2 * (ma_period**ma_speed)])
-    sum_weights = weights.sum()
+# --- 4. Dynamic Charting Engine (Lightweight Charts) ---
+charts = []
 
-    def calc_qwma(x):
-        return np.sum(x * weights) / sum_weights
+themes = {
+    "mike": {
+        "bg": "#0E1117", "text": "#E0E6ED", "grid": "#2B3040", 
+        "up": "#00FFAA", "down": "#FF4B4B", "vol_up": "rgba(0, 255, 170, 0.2)", "vol_down": "rgba(255, 75, 75, 0.2)"
+    },
+    "nightclouds": {
+        "bg": "#131722", "text": "#D1D4DC", "grid": "#363C4E", 
+        "up": "#26A69A", "down": "#EF5350", "vol_up": "rgba(38, 166, 154, 0.2)", "vol_down": "rgba(239, 83, 80, 0.2)"
+    },
+    "yahoo": {
+        "bg": "#FFFFFF", "text": "#111111", "grid": "#E1E5EA", 
+        "up": "#0081F2", "down": "#FF333A", "vol_up": "rgba(0, 129, 242, 0.2)", "vol_down": "rgba(255, 51, 58, 0.2)"
+    },
+    "blueskies": {
+        "bg": "#F4F8FB", "text": "#000000", "grid": "#DDE6ED", 
+        "up": "#089981", "down": "#F23645", "vol_up": "rgba(8, 153, 129, 0.2)", "vol_down": "rgba(242, 54, 69, 0.2)"
+    }
+}
+c_theme = themes[theme_sel]
 
-    work = close.rolling(window=ma_period).apply(calc_qwma, raw=True)
+chart_layout = {
+    "layout": { "textColor": c_theme["text"], "background": { "type": 'solid', "color": c_theme["bg"] } },
+    "grid": { "vertLines": { "color": c_theme["grid"] }, "horzLines": { "color": c_theme["grid"] } },
+    "crosshair": { "mode": 0 }, 
+    "rightPriceScale": {
+        "mode": 1 if use_log else 0,
+        "autoScale": True,
+        "alignLabels": True,
+        "borderVisible": False,
+    }
+}
 
-    # 2. Calculate Variance (v1)
-    dev_period = correction_period if correction_period > 0 else (0 if correction_period < 0 else ma_period)
-    if dev_period > 0:
-        # TradingView uses population std dev (ddof=0)
-        v1 = close.rolling(window=dev_period).std(ddof=0) ** 2
-    else:
-        v1 = pd.Series(0, index=df.index)
+# --- 🎛️ DYNAMIC AXIS LOGIC (UPDATED FOR BACKTEST) ---
+has_rsi = "RSI Divergence" in oscillators
+has_macd = "MACD" in oscillators
+has_bt = run_backtest
 
-    # 3. Corrected QWMA Iterative Calculation
-    qwma = np.full(len(close), np.nan)
-    v1_arr = v1.values
-    work_arr = work.values
+price_is_bottom = not (has_rsi or has_macd or has_bt)
+rsi_is_bottom = has_rsi and not (has_macd or has_bt)
+macd_is_bottom = has_macd and not has_bt
+bt_is_bottom = has_bt
 
-    first_valid = np.isnan(work_arr).argmin()
-    if first_valid < len(work_arr):
-        qwma[first_valid] = work_arr[first_valid]
-        for i in range(first_valid + 1, len(close)):
-            prev = qwma[i-1]
-            cur_work = work_arr[i]
-            cur_v1 = v1_arr[i]
+# --- PANE 1: PRICE & OVERLAYS ---
+main_series = []
+candles = [{"time": get_time(idx), "open": r['Open'], "high": r['High'], "low": r['Low'], "close": r['Close']} for idx, r in data.iterrows()]
 
-            if np.isnan(prev) or np.isnan(cur_work) or np.isnan(cur_v1):
-                qwma[i] = cur_work if not np.isnan(cur_work) else prev
-                continue
-
-            v2 = (prev - cur_work) ** 2
-            if v2 < cur_v1 or v2 == 0:
-                c = 0.0
-            else:
-                c = 1.0 - (cur_v1 / v2)
-
-            qwma[i] = prev + c * (cur_work - prev)
-
-    df['CQWMA'] = qwma
-
-    # 4. Floating Levels
-    qwma_s = df['CQWMA']
-    min_fl = qwma_s.rolling(window=fl_period).min()
-    max_fl = qwma_s.rolling(window=fl_period).max()
-    rng = max_fl - min_fl
-
-    df['CQWMA_Up'] = min_fl + (fl_up * rng / 100.0)
-    df['CQWMA_Down'] = min_fl + (fl_down * rng / 100.0)
-    df['CQWMA_Mid'] = (df['CQWMA_Up'] + df['CQWMA_Down']) * 0.5
-
-    # 5. Signal/Color Logic (Loxx's "Middle" mode logic)
-    # 1 = Green, 2 = Red, 0 = Gray
-    color_state = np.zeros(len(qwma))
-    fup_arr = df['CQWMA_Up'].values
-    fdn_arr = df['CQWMA_Down'].values
-
-    for i in range(1, len(qwma)):
-        if np.isnan(qwma[i]) or np.isnan(fup_arr[i]) or np.isnan(fdn_arr[i]):
-            continue
-
-        if qwma[i] > fup_arr[i]:
-            color_state[i] = 1
-        elif qwma[i] < fdn_arr[i]:
-            color_state[i] = 2
-        elif qwma[i] == qwma[i-1]:
-            color_state[i] = color_state[i-1]
-        else:
-            color_state[i] = 0
-
-    df['CQWMA_Color'] = color_state
-
-    return df
-    
-# --- 2. Advanced / Custom Logic (Kept manual as they are not standard) ---
-
-def apply_rsi_divergence(df, rsi_period=14, lookback=20):
-    """
-    Uses pandas-ta for the base RSI calculation, but retains our custom 
-    scipy geometry logic to find the actual divergence signals.
-    """
-    # 1. Use pandas-ta for the clean RSI calculation
-    df.ta.rsi(length=rsi_period, append=True)
-    df.rename(columns={f"RSI_{rsi_period}": "RSI"}, inplace=True)
-    
-    # 2. Custom Divergence Geometry Logic
-    df['Trough'] = 0
-    troughs = argrelextrema(df['Low'].values, np.less_equal, order=lookback)[0]
-    df.loc[df.index[troughs], 'Trough'] = 1
-    
-    df['Signal'] = 0
-    last_trough_idx = None
-    
-    for i in range(len(df)):
-        if df['Trough'].iloc[i] == 1:
-            if last_trough_idx is not None:
-                # Bullish Regular Divergence
-                if df['Low'].iloc[i] < df['Low'].iloc[last_trough_idx] and df['RSI'].iloc[i] > df['RSI'].iloc[last_trough_idx]:
-                    if df['RSI'].iloc[i] < 40: 
-                        df.iloc[i, df.columns.get_loc('Signal')] = 1
-            last_trough_idx = i
+markers = []
+if "TD Sequential" in overlays:
+    if 'Setup_Signal' in data.columns:
+        for idx, r in data[data['Setup_Signal'] == 1].iterrows():
+            markers.append({"time": get_time(idx), "position": "belowBar", "color": c_theme["up"], "shape": "arrowUp", "text": "9"})
+        for idx, r in data[data['Setup_Signal'] == -1].iterrows():
+            markers.append({"time": get_time(idx), "position": "aboveBar", "color": c_theme["down"], "shape": "arrowDown", "text": "9"})
             
-    return df
+    if 'Countdown_Signal' in data.columns:
+        for idx, r in data[data['Countdown_Signal'] == 1].iterrows():
+            markers.append({"time": get_time(idx), "position": "belowBar", "color": "#00AAFF", "shape": "arrowUp", "text": "13", "size": 2})
+        for idx, r in data[data['Countdown_Signal'] == -1].iterrows():
+            markers.append({"time": get_time(idx), "position": "aboveBar", "color": "#FFAA00", "shape": "arrowDown", "text": "13", "size": 2})
 
-def apply_td_sequential(df):
-    """
-    Calculates both TD Setup (9) and TD Countdown (13).
-    """
-    df = df.copy()
-    df['TD_Setup'] = 0
-    df['TD_Countdown'] = 0
-    
-    # We now separate the signals so the UI can plot '9' and '13' independently
-    df['Setup_Signal'] = 0      # Will trigger 1 (Buy 9) or -1 (Sell 9)
-    df['Countdown_Signal'] = 0  # Will trigger 1 (Buy 13) or -1 (Sell 13)
-    
-    # Setup Logic: Close vs Close 4 bars ago
-    df['Close_vs_Close4'] = np.where(df['Close'] > df['Close'].shift(4), 1, 
-                                     np.where(df['Close'] < df['Close'].shift(4), -1, 0))
-    
-    setup_count = 0
-    setup_direction = 0
-    
-    countdown_count = 0
-    active_countdown_dir = 0 # Tracks if we are looking for Buy 13s or Sell 13s
+main_series.append({
+    "type": "Candlestick",
+    "data": candles,
+    "options": {
+        "upColor": c_theme["up"], "downColor": c_theme["down"],
+        "borderVisible": False, "wickUpColor": c_theme["up"], "wickDownColor": c_theme["down"]
+    },
+    "markers": markers if markers else []
+})
 
-    for i in range(4, len(df)):
-        # --- 1. SETUP PHASE (Looking for 9) ---
-        current_dir = df['Close_vs_Close4'].iloc[i]
-        
-        if current_dir != 0 and current_dir == setup_direction:
-            setup_count += 1
-        else:
-            setup_count = 1 if current_dir != 0 else 0
-            setup_direction = current_dir
-            
-        df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_count * setup_direction
-        
-        # When Setup hits 9, record signal and activate the Countdown phase
-        if setup_count == 9:
-            # 1 = Buy Setup (Price dropping), -1 = Sell Setup (Price rising)
-            signal_dir = 1 if setup_direction == -1 else -1
-            df.iloc[i, df.columns.get_loc('Setup_Signal')] = signal_dir
-            
-            # Start/Restart the Countdown phase
-            active_countdown_dir = signal_dir
-            countdown_count = 0 
-            setup_count = 0 # Reset setup to look for fresh 9s
-            
-        # --- 2. COUNTDOWN PHASE (Looking for 13) ---
-        if active_countdown_dir != 0 and i >= 2:
-            # Buy Countdown: Close must be <= True Low 2 bars prior
-            if active_countdown_dir == 1 and df['Close'].iloc[i] <= df['Low'].iloc[i-2]:
-                countdown_count += 1
-            # Sell Countdown: Close must be >= True High 2 bars prior
-            elif active_countdown_dir == -1 and df['Close'].iloc[i] >= df['High'].iloc[i-2]:
-                countdown_count += 1
-                
-            df.iloc[i, df.columns.get_loc('TD_Countdown')] = countdown_count * active_countdown_dir
+if "Volume" in data.columns:
+    vol_data = [{"time": get_time(idx), "value": r['Volume'], "color": c_theme["vol_up"] if r['Close'] >= r['Open'] else c_theme["vol_down"]} for idx, r in data.iterrows()]
+    main_series.append({
+        "type": "Histogram",
+        "data": vol_data,
+        "options": {
+            "priceFormat": {"type": 'volume'},
+            "priceScaleId": "", 
+            "scaleMargins": {"top": 0.85, "bottom": 0} 
+        }
+    })
 
-            # When Countdown hits 13, record signal and reset
-            if countdown_count == 13:
-                df.iloc[i, df.columns.get_loc('Countdown_Signal')] = active_countdown_dir
-                active_countdown_dir = 0 # Reset after completion
-                countdown_count = 0
+# --- Custom Moving Averages ---
+if "Jurik MA" in overlays and 'JMA' in data.columns:
+    jma_data = [{"time": get_time(idx), "value": r['JMA']} for idx, r in data.iterrows() if pd.notna(r['JMA'])]
+    main_series.append({"type": "Line", "data": jma_data, "options": {"color": "#E040FB", "lineWidth": 2, "crosshairMarkerVisible": False}})
 
-    return df
+if "Natural MA" in overlays and 'NMA' in data.columns:
+    nma_data = [{"time": get_time(idx), "value": r['NMA']} for idx, r in data.iterrows() if pd.notna(r['NMA'])]
+    main_series.append({"type": "Line", "data": nma_data, "options": {"color": "#00E676", "lineWidth": 2, "crosshairMarkerVisible": False}})
 
-def apply_jma(df, length=7, phase=0):
-    """
-    Calculates the Jurik Moving Average (JMA) utilizing pandas-ta.
-    Phase typically ranges from -100 to 100.
-    """
-    df = df.copy()
-    
-    # Calculate JMA using pandas-ta and append it to the dataframe
-    df.ta.jma(length=length, phase=phase, append=True)
-    
-    # Locate the generated pandas-ta JMA column (e.g., JMA_7_0) and rename to 'JMA'
-    jma_cols = [col for col in df.columns if col.startswith('JMA_')]
-    if jma_cols:
-        df.rename(columns={jma_cols[-1]: 'JMA'}, inplace=True)
-        
-    return df
+if "Natural Channel" in overlays and 'NMC_Upper' in data.columns:
+    nmc_up = [{"time": get_time(idx), "value": r['NMC_Upper']} for idx, r in data.iterrows() if pd.notna(r['NMC_Upper'])]
+    nmc_dn = [{"time": get_time(idx), "value": r['NMC_Lower']} for idx, r in data.iterrows() if pd.notna(r['NMC_Lower'])]
+    main_series.append({"type": "Line", "data": nmc_up, "options": {"color": "#FF9100", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": nmc_dn, "options": {"color": "#FF9100", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
 
-def apply_natural_moving_average(df, length=40):
-    """
-    Calculates Jim Sloman's Ocean Natural Moving Average (NMA).
-    Uses the Natural Market River concept for dynamically adaptive momentum smoothing.
-    """
-    df = df.copy()
-    close = df['Close']
+if "Corrected QWMA" in overlays and 'CQWMA' in data.columns:
+    cqwma_up = [{"time": get_time(idx), "value": r['CQWMA_Up']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Up'])]
+    cqwma_dn = [{"time": get_time(idx), "value": r['CQWMA_Down']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Down'])]
+    cqwma_mid = [{"time": get_time(idx), "value": r['CQWMA_Mid']} for idx, r in data.iterrows() if pd.notna(r['CQWMA_Mid'])]
     
-    # 1. Generate Ocean Weights: sqrt(x) - sqrt(x-1)
-    # The most recent bar (x=1) gets the highest weight, tapering off as x increases to `length`.
-    weights = np.sqrt(np.arange(1, length + 1)) - np.sqrt(np.arange(0, length))
-    
-    # When using pandas rolling apply, data is passed oldest to newest (index 0 to length-1).
-    # We reverse the weights so the highest weight (index 0 of original) aligns with the newest data.
-    weights_reversed = weights[::-1]
-    
-    # 2. Calculate point-to-point price deltas
-    delta = close.diff()
-    abs_delta = delta.abs()
-    
-    # 3. Calculate Natural Market River (NMR) & Total Absolute Delta
-    def calc_weighted_sum(arr):
-        return np.sum(arr * weights_reversed)
-        
-    # The NMR (Numerator) is the absolute value of the weighted net directional movement
-    nmr = delta.rolling(window=length).apply(calc_weighted_sum, raw=True).abs()
-    
-    # The Denominator is the weighted sum of absolute price movements (volatility)
-    total_delta = abs_delta.rolling(window=length).apply(calc_weighted_sum, raw=True)
-    
-    # 4. Calculate Dynamic Ratio (Alpha)
-    ratio = nmr / total_delta.replace(0, np.nan)
-    ratio = ratio.fillna(0) # Handle division by zero in perfectly flat markets
-    
-    # 5. Iterative EMA calculation applying the dynamic ratio
-    nma = np.full(len(close), np.nan)
-    close_arr = close.values
-    ratio_arr = ratio.values
-    
-    first_valid = ratio.notna().idxmax()
-    if pd.notna(first_valid) and first_valid in df.index:
-        start_idx = df.index.get_loc(first_valid)
-        nma[start_idx] = close_arr[start_idx]
-        
-        for i in range(start_idx + 1, len(close)):
-            alpha = ratio_arr[i]
-            nma[i] = nma[i-1] + alpha * (close_arr[i] - nma[i-1])
-            
-    df['NMA'] = nma
-    return df
+    cqwma_data = []
+    for idx, r in data.iterrows():
+        val = r['CQWMA']
+        if pd.notna(val):
+            c_val = r['CQWMA_Color']
+            color = c_theme["up"] if c_val == 1 else (c_theme["down"] if c_val == 2 else "#888888")
+            cqwma_data.append({"time": get_time(idx), "value": val, "color": color})
 
-def apply_natural_market_channel(df, nma_length=40, atr_length=14, multiplier=1.5):
-    """
-    Calculates the Natural Market Channel (NMC).
-    Builds adaptive volatility bands around Jim Sloman's Natural Moving Average (NMA).
-    """
-    df = df.copy()
-    
-    # 1. Ensure NMA is calculated first
-    if 'NMA' not in df.columns:
-        df = apply_natural_moving_average(df, length=nma_length)
-        
-    # 2. Calculate Average True Range (ATR) as the dynamic channel width
-    df.ta.atr(length=atr_length, append=True)
-    atr_col = [col for col in df.columns if col.startswith('ATRr_')][-1]
-    
-    # 3. Build Upper and Lower Natural Market Channel bands
-    df['NMC_Upper'] = df['NMA'] + (df[atr_col] * multiplier)
-    df['NMC_Lower'] = df['NMA'] - (df[atr_col] * multiplier)
-    
-    return df
+    main_series.append({"type": "Line", "data": cqwma_up, "options": {"color": c_theme["up"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": cqwma_mid, "options": {"color": "#888888", "lineWidth": 1, "lineStyle": 3, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": cqwma_dn, "options": {"color": c_theme["down"], "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
+    main_series.append({"type": "Line", "data": cqwma_data, "options": {"lineWidth": 3}})
 
-def apply_dma(df, base_length=8, smoothing=2):
-    """
-    Dynamic Moving Average: adjusts length based on price momentum (ROC).
-    """
-    df = df.copy()
-    series = df['Close']
-    
-    roc = series.pct_change(periods=base_length) * 100
-    norm_roc = np.clip(abs(roc) / 5, 0.2, 1.0)
-    dyn_len = base_length * (1.5 - norm_roc)
-    dyn_len = np.clip(dyn_len.fillna(base_length), 5, base_length * 2)
-    
-    alpha = smoothing / (dyn_len + 1)
-    
-    dma = [series.iloc[0]]
-    for i in range(1, len(series)):
-        dma_val = alpha.iloc[i] * series.iloc[i] + (1 - alpha.iloc[i]) * dma[-1]
-        dma.append(dma_val)
-    
-    df['DMA'] = pd.Series(dma, index=series.index)
-    return df
+charts.append({
+    "chart": {
+        **chart_layout, 
+        "height": 600, 
+        "timeScale": { "visible": price_is_bottom, "timeVisible": True, "secondsVisible": False } 
+    },
+    "series": main_series
+})
 
-def apply_dma_bands(df, dma_length=13, atr_length=14, multiplier=2):
-    """
-    DMA Bands: Dynamic bands using ATR around the faster DMA.
-    Width expands/contracts with volatility.
-    """
-    df = df.copy()
+# --- PANE 2: RSI ---
+if has_rsi and 'RSI' in data.columns:
+    rsi_data = [{"time": get_time(idx), "value": r['RSI']} for idx, r in data.iterrows() if pd.notna(r['RSI'])]
+    rsi_markers = []
     
-    # 1. Ensure DMA is calculated first
-    if 'DMA' not in df.columns:
-        df = apply_dma(df, base_length=dma_length)
-        
-    # 2. Calculate ATR using custom exponential weighting logic
-    high = df['High']
-    low = df['Low']
-    close = df['Close']
+    if 'Signal' in data.columns:
+        for idx, r in data[data['Signal'] == 1].iterrows():
+            rsi_markers.append({"time": get_time(idx), "position": "belowBar", "color": c_theme["up"], "shape": "arrowUp", "text": "DIV"})
+
+    rsi_dummy_timeline = [{"time": get_time(idx), "value": 50} for idx, r in data.iterrows()]
+
+    charts.append({
+        "chart": {
+            **chart_layout, 
+            "height": 180,
+            "timeScale": { "visible": rsi_is_bottom, "timeVisible": True, "secondsVisible": False }
+        },
+        "series": [
+            {"type": "Line", "data": rsi_dummy_timeline, "options": {"color": "transparent", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
+            {
+                "type": "Line", 
+                "data": rsi_data, 
+                "options": {
+                    "color": "#00AAFF", "lineWidth": 1.5,
+                    "priceLines": [
+                        {"price": 70, "color": c_theme["down"], "lineStyle": 2, "lineWidth": 1},
+                        {"price": 30, "color": c_theme["up"], "lineStyle": 2, "lineWidth": 1}
+                    ]
+                },
+                "markers": rsi_markers
+            }
+        ]
+    })
+
+# --- PANE 3: MACD ---
+if has_macd and 'MACD' in data.columns:
+    macd_line = [{"time": get_time(idx), "value": r['MACD']} for idx, r in data.iterrows() if pd.notna(r['MACD'])]
+    macd_signal = [{"time": get_time(idx), "value": r['MACD_Signal']} for idx, r in data.iterrows() if pd.notna(r['MACD_Signal'])]
+    macd_hist = [{"time": get_time(idx), "value": r['MACD_Hist'], "color": c_theme["up"] if r['MACD_Hist'] >= 0 else c_theme["down"]} for idx, r in data.iterrows() if pd.notna(r['MACD_Hist'])]
     
-    tr = pd.DataFrame(index=df.index)
-    tr['h_l'] = high - low
-    tr['h_pc'] = abs(high - close.shift(1))
-    tr['l_pc'] = abs(low - close.shift(1))
-    tr['tr'] = tr[['h_l', 'h_pc', 'l_pc']].max(axis=1)
-    
-    atr = tr['tr'].ewm(span=atr_length, min_periods=atr_length).mean()
-    
-    # 3. Build Upper, Lower, and Mid Bands
-    df['DMA_Upper'] = df['DMA'] + (multiplier * atr)
-    df['DMA_Lower'] = df['DMA'] - (multiplier * atr)
-    df['DMA_Mid'] = df['DMA']
-    
-    return df
+    dummy_timeline = [{"time": get_time(idx), "value": 0} for idx, r in data.iterrows()]
+
+    charts.append({
+        "chart": {
+            **chart_layout, 
+            "height": 180,
+            "timeScale": { "visible": macd_is_bottom, "timeVisible": True, "secondsVisible": False }
+        },
+        "series": [
+            {"type": "Line", "data": dummy_timeline, "options": {"color": "transparent", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
+            {"type": "Histogram", "data": macd_hist},
+            {"type": "Line", "data": macd_line, "options": {"color": "#00AAFF", "lineWidth": 1.5}},
+            {"type": "Line", "data": macd_signal, "options": {"color": "#FFBB00", "lineWidth": 1.5}}
+        ]
+    })
+
+# --- 🎛️ PANE 4: BACKTEST EQUITY CURVE ---
+if has_bt and 'Equity' in data.columns:
+    baseline_data = [{"time": get_time(idx), "value": r['Equity']} for idx, r in data.iterrows() if pd.notna(r['Equity'])]
+    bt_dummy = [{"time": get_time(idx), "value": 10000} for idx, r in data.iterrows()]
+
+    charts.append({
+        "chart": {
+            **chart_layout, 
+            "height": 200,
+            "timeScale": { "visible": bt_is_bottom, "timeVisible": True, "secondsVisible": False }
+        },
+        "series": [
+            {"type": "Line", "data": bt_dummy, "options": {"color": "transparent", "priceLineVisible": False, "crosshairMarkerVisible": False, "lastValueVisible": False}},
+            {
+                "type": "Baseline", 
+                "data": baseline_data, 
+                "options": {
+                    "baseValue": {"type": "price", "price": 10000}, # Anchors the chart at initial capital
+                    "topLineColor": c_theme["up"],
+                    "topFillColor1": c_theme["vol_up"],
+                    "topFillColor2": "rgba(0, 0, 0, 0)",
+                    "bottomLineColor": c_theme["down"],
+                    "bottomFillColor1": "rgba(0, 0, 0, 0)",
+                    "bottomFillColor2": c_theme["vol_down"],
+                    "lineWidth": 2,
+                }
+            }
+        ]
+    })
+
+# --- 5. Render to Streamlit ---
+with st.container(border=True):
+    renderLightweightCharts(charts)
