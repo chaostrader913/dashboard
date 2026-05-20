@@ -234,7 +234,7 @@ if ticker:
 
                     buf = io.BytesIO()
                     fig.savefig(buf, format="png", dpi=100, facecolor=fig.get_facecolor(), bbox_inches='tight', pad_inches=0)
-                    st.image(buf, use_container_width=True)
+                    st.image(buf, width=True)
                     plt.close(fig)
                 else:
                     st.warning(f"{label} No Data")
