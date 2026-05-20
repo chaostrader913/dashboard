@@ -1,6 +1,7 @@
 streamlit
 yfinance
 numpy<2.0.0
+numba
 scipy
 statsmodels
 pandas
