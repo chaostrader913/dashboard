@@ -32,7 +32,7 @@ with col3:
 with col4:
     overlays = st.multiselect(
         "PRICE OVERLAYS", 
-        options=["TD Sequential", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel", "Dynamic MA", "DMA Bands"], 
+        options=["TD Sequential", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel", "Fast Dynamic MA", "Slow Dynamic MA", "DMA Bands"], 
         default=["TD Sequential", "Corrected QWMA"]
     )
 with col5:
@@ -50,12 +50,14 @@ with st.expander("⚙️ INDICATOR PARAMETERS", expanded=False):
     with p1:
         jma_len = st.number_input("Jurik MA Length", 1, 100, 7)
         jma_phase = st.number_input("Jurik MA Phase", -100, 100, 0)
-    with p2:
         nma_len = st.number_input("Natural MA Length", 1, 200, 40)
+    with p2:
+        fast_dma_len = st.number_input("Fast DMA Length", 1, 200, 10)
+        fast_dma_smooth = st.number_input("Fast DMA Smoothing", 1, 10, 2)
         nmc_mult = st.number_input("Natural Channel Mult", 0.1, 5.0, 1.5)
     with p3:
-        dma_len = st.number_input("DMA Base Length", 1, 200, 10)
-        dma_smooth = st.number_input("DMA Smoothing", 1, 10, 2)
+        slow_dma_len = st.number_input("Slow DMA Length", 1, 200, 30)
+        slow_dma_smooth = st.number_input("Slow DMA Smoothing", 1, 10, 2)
         dma_mult = st.number_input("DMA Band Mult", 0.1, 5.0, 2.5)
     with p4:
         qwma_len = st.number_input("QWMA Period", 1, 100, 25)
@@ -75,7 +77,8 @@ with bt_col2:
     if "Corrected QWMA" in overlays: available_strats.append("CQWMA Trend Color")
     if "Jurik MA" in overlays: available_strats.append("Price vs Jurik MA")
     if "Natural MA" in overlays or "Natural Channel" in overlays: available_strats.append("Price vs Natural MA")
-    if "Dynamic MA" in overlays or "DMA Bands" in overlays: available_strats.append("Price vs Dynamic MA")
+    if "Fast Dynamic MA" in overlays: available_strats.append("Price vs Fast DMA")
+    if "Fast Dynamic MA" in overlays and "Slow Dynamic MA" in overlays: available_strats.append("DMA Crossover (Fast vs Slow)")
     if "TD Sequential" in overlays: available_strats.append("TD Sequential (Buy 9/Sell 9)")
     if "MACD" in oscillators: available_strats.append("MACD Crossover")
     
@@ -90,8 +93,8 @@ with bt_col2:
 with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
     data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1d" else "60d")
 
-if data is None or data.empty:
-    st.error(f"ERR: NO DATA FOUND FOR {ticker}.")
+if data is None or data.empty or len(data) < 100:
+    st.error(f"ERR: INSUFFICIENT DATA FOR {ticker}. Need at least 100 candles.")
     st.stop()
 
 # Apply selected mathematical models with user parameters
@@ -101,15 +104,17 @@ if "MACD" in oscillators: data = apply_macd(data, fast=macd_fast, slow=macd_slow
 if "Jurik MA" in overlays: data = apply_jma(data, length=jma_len, phase=jma_phase)
 if "Natural MA" in overlays: data = apply_natural_moving_average(data, length=nma_len)
 if "Natural Channel" in overlays: data = apply_natural_market_channel(data, nma_length=nma_len, multiplier=nmc_mult)
-if "Dynamic MA" in overlays: data = apply_dma(data, base_length=dma_len, smoothing=dma_smooth)
-if "DMA Bands" in overlays: data = apply_dma_bands(data, dma_length=dma_len, multiplier=dma_mult)
+
+if "Fast Dynamic MA" in overlays: data = apply_dma(data, base_length=fast_dma_len, smoothing=fast_dma_smooth, col_name='Fast_DMA')
+if "Slow Dynamic MA" in overlays: data = apply_dma(data, base_length=slow_dma_len, smoothing=slow_dma_smooth, col_name='Slow_DMA')
+
+if "DMA Bands" in overlays: data = apply_dma_bands(data, dma_length=fast_dma_len, multiplier=dma_mult)
 if "Corrected QWMA" in overlays: data = apply_corrected_qwma(data, ma_period=qwma_len)
 
 # --- 6. Dynamic Backtest Engine Logic ---
 if run_backtest and bt_source:
     pos = pd.Series(0, index=data.index)
     
-    # Generate Position Vectors (1 = Long, -1 = Short)
     if bt_source == "CQWMA Trend Color" and 'CQWMA_Color' in data.columns:
         pos = data['CQWMA_Color'].replace({0: np.nan, 2: -1}).ffill().fillna(0)
         
@@ -119,8 +124,11 @@ if run_backtest and bt_source:
     elif bt_source == "Price vs Natural MA" and 'NMA' in data.columns:
         pos = pd.Series(np.where(data['Close'] > data['NMA'], 1, -1), index=data.index)
         
-    elif bt_source == "Price vs Dynamic MA" and 'DMA' in data.columns:
-        pos = pd.Series(np.where(data['Close'] > data['DMA'], 1, -1), index=data.index)
+    elif bt_source == "Price vs Fast DMA" and 'Fast_DMA' in data.columns:
+        pos = pd.Series(np.where(data['Close'] > data['Fast_DMA'], 1, -1), index=data.index)
+
+    elif bt_source == "DMA Crossover (Fast vs Slow)" and 'Fast_DMA' in data.columns and 'Slow_DMA' in data.columns:
+        pos = pd.Series(np.where(data['Fast_DMA'] > data['Slow_DMA'], 1, -1), index=data.index)
         
     elif bt_source == "MACD Crossover" and 'MACD' in data.columns:
         pos = pd.Series(np.where(data['MACD'] > data['MACD_Signal'], 1, -1), index=data.index)
@@ -128,13 +136,8 @@ if run_backtest and bt_source:
     elif bt_source == "TD Sequential (Buy 9/Sell 9)" and 'Setup_Signal' in data.columns:
         pos = data['Setup_Signal'].replace(0, np.nan).ffill().fillna(0)
 
-    # Shift by 1 to prevent lookahead bias (trade executes on the open of the next candle)
     data['Position'] = pos.shift(1)
-    
-    # Calculate daily strategy returns
     data['Strat_Return'] = data['Position'] * data['Close'].pct_change()
-    
-    # Calculate Equity Curve (Starting capital: $10,000)
     data['Equity'] = (1 + data['Strat_Return'].fillna(0)).cumprod() * 10000
 
 def get_time(idx):
@@ -175,7 +178,6 @@ chart_layout = {
     }
 }
 
-# --- DYNAMIC AXIS LOGIC ---
 has_rsi = "RSI Divergence" in oscillators
 has_macd = "MACD" in oscillators
 has_bt = run_backtest and 'Equity' in data.columns
@@ -225,7 +227,6 @@ if "Volume" in data.columns:
         }
     })
 
-# --- Custom Moving Averages Plotted ---
 if "Jurik MA" in overlays and 'JMA' in data.columns:
     jma_data = [{"time": get_time(idx), "value": r['JMA']} for idx, r in data.iterrows() if pd.notna(r['JMA'])]
     main_series.append({"type": "Line", "data": jma_data, "options": {"color": "#E040FB", "lineWidth": 2, "crosshairMarkerVisible": False}})
@@ -240,9 +241,13 @@ if "Natural Channel" in overlays and 'NMC_Upper' in data.columns:
     main_series.append({"type": "Line", "data": nmc_up, "options": {"color": "#00E676", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
     main_series.append({"type": "Line", "data": nmc_dn, "options": {"color": "#00E676", "lineWidth": 1, "lineStyle": 2, "crosshairMarkerVisible": False}})
 
-if "Dynamic MA" in overlays and 'DMA' in data.columns:
-    dma_data = [{"time": get_time(idx), "value": r['DMA']} for idx, r in data.iterrows() if pd.notna(r['DMA'])]
-    main_series.append({"type": "Line", "data": dma_data, "options": {"color": "#2962FF", "lineWidth": 2, "crosshairMarkerVisible": False}})
+if "Fast Dynamic MA" in overlays and 'Fast_DMA' in data.columns:
+    fdma_data = [{"time": get_time(idx), "value": r['Fast_DMA']} for idx, r in data.iterrows() if pd.notna(r['Fast_DMA'])]
+    main_series.append({"type": "Line", "data": fdma_data, "options": {"color": "#2962FF", "lineWidth": 2, "crosshairMarkerVisible": False}})
+
+if "Slow Dynamic MA" in overlays and 'Slow_DMA' in data.columns:
+    sdma_data = [{"time": get_time(idx), "value": r['Slow_DMA']} for idx, r in data.iterrows() if pd.notna(r['Slow_DMA'])]
+    main_series.append({"type": "Line", "data": sdma_data, "options": {"color": "#FF9100", "lineWidth": 2, "crosshairMarkerVisible": False}})
 
 if "DMA Bands" in overlays and 'DMA_Upper' in data.columns:
     dma_up = [{"time": get_time(idx), "value": r['DMA_Upper']} for idx, r in data.iterrows() if pd.notna(r['DMA_Upper'])]
@@ -350,7 +355,7 @@ if has_bt:
                 "type": "Baseline", 
                 "data": baseline_data, 
                 "options": {
-                    "baseValue": {"type": "price", "price": 10000}, # Anchors chart at initial capital
+                    "baseValue": {"type": "price", "price": 10000},
                     "topLineColor": c_theme["up"],
                     "topFillColor1": c_theme["vol_up"],
                     "topFillColor2": "rgba(0, 0, 0, 0)",
