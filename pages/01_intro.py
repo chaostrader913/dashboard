@@ -42,14 +42,14 @@ with col1:
         st.markdown("### 📈 1. Chart Grid")
         st.write("Synchronized multi-asset visualization. Monitor up to 4 distinct tickers simultaneously with linked crosshairs and real-time data updates.")
         # Optional: Add a button to navigate (requires the exact file path from your st.navigation setup)
-        if st.button("Launch Chart Grid", use_container_width=True):
+        if st.button("Launch Chart Grid", width=True):
             st.switch_page("pages/02_Chart_Grid.py")
 
 with col2:
     with st.container(border=True):
         st.markdown("### 📡 2. Signal Scanner")
         st.write("Real-time algorithmic pattern detection. Scan the universe of assets for technical breakouts, RSI divergences, and volume anomalies.")
-        if st.button("Launch Scanner", use_container_width=True):
+        if st.button("Launch Scanner", width=True):
             st.switch_page("pages/03_Signal_Scanner.py")
 
 # Row 2 of Modules
@@ -59,7 +59,7 @@ with col3:
     with st.container(border=True):
         st.markdown("### ⏱️ 3. MTF Grid (Single Asset)")
         st.write("Multiple Timeframe analysis. Deep dive into a single ticker across the 1m, 5m, 1H, and Daily charts to align macro trends with micro entries.")
-        if st.button("Launch MTF Grid", use_container_width=True):
+        if st.button("Launch MTF Grid", width=True):
              # Update this path when you create the file
              st.switch_page("pages/04_MTF_Analyzer.py")
 
@@ -67,7 +67,7 @@ with col4:
     with st.container(border=True):
         st.markdown("### ⚙️ 4. Strategy Backtesting & Optimizer")
         st.write("Historical simulation engine. Test your custom logic against historical data, calculate Drawdown/Sharpe ratios, and optimize parameters.")
-        if st.button("Launch Backtester", use_container_width=True):
+        if st.button("Launch Backtester", width=True):
             st.warning("Navigate via sidebar (Link pending)")
 
 # Row 3 (TBC)
