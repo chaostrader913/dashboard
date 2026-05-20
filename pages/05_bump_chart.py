@@ -25,20 +25,7 @@ st.caption("STATIC SNAPSHOT ENGINE // BIRD'S EYE VIEW")
 
 # --- 2. Upgraded Institutional Ticker Database ---
 TICKER_GROUPS = {
-    'Indices (US)': {
-        '^GSPC': 'S&P 500', '^DJI': 'Dow Jones', 'QQQ': 'Nasdaq 100', 'IWM': 'Russell 2000',
-        'MTUM': 'US Momentum', 'VLUE': 'US Value', 'QUAL': 'US Quality', 'USMV': 'US Min Vol', '^VIX':'VIX  Index'
-    },
-    'Sectors (US)': {
-        'XLK': 'Technology', 'XLV': 'Healthcare', 'XLF': 'Financials', 'XLE': 'Energy', 
-        'XLI': 'Industrials', 'XLY': 'Cons. Disc.', 'XLP': 'Cons. Staples', 
-        'XLU': 'Utilities', 'XLB': 'Materials', 'XLRE': 'Real Estate', 'XLC': 'Comm. Svcs'
-    },
-    'Themes (US)': {
-        'SMH': 'Semiconductors', 'IGV': 'Software', 'XBI': 'Biotech', 'ARKK': 'Innovation', 
-        'TAN': 'Solar', 'URA': 'Uranium', 'LIT': 'Lithium', 'PAVE': 'Infrastructure'
-    },
-  
+ 
     'Commodity, Currencies & Crypto': {
         'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil', 
         'HG=F': 'Copper', 'DX-Y.NYB':'Dollar Index',
