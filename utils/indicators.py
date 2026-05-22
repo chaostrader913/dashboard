@@ -61,15 +61,49 @@ def _calc_dma_iterative(series_arr, alpha_arr):
 # ==========================================
 
 def apply_macd(df, fast=12, slow=26, signal=9):
-    """Calculates MACD bypassing pandas-ta to prevent EMA initialization lagging."""
+    """
+    Calculates MACD matching TradingView's exact PineScript math engine.
+    Replaces standard Pandas EWM price-seeding with TradingView's SMA-seeding.
+    """
     df = df.copy()
     close = df['Close']
     
-    fast_ema = close.ewm(span=fast, min_periods=fast, adjust=False).mean()
-    slow_ema = close.ewm(span=slow, min_periods=slow, adjust=False).mean()
+    def tv_ema(series, length):
+        """Calculates an SMA-seeded EMA using vectorized pandas math."""
+        # Calculate the SMA to use as the seed
+        sma = series.rolling(window=length, min_periods=length).mean()
+        
+        # Create an empty Series to hold our seeded sequence
+        seed = pd.Series(np.nan, index=series.index)
+        
+        first_valid_label = sma.first_valid_index()
+        if first_valid_label is not None:
+            # Get integer position to handle DatetimeIndexes safely
+            start_pos = series.index.get_loc(first_valid_label)
+            
+            # 1. Seed the first valid observation with the SMA value
+            seed.iloc[start_pos] = sma.iloc[start_pos]
+            
+            # 2. Append the raw price data for all remaining rows
+            if start_pos + 1 < len(series):
+                seed.iloc[start_pos + 1:] = series.iloc[start_pos + 1:]
+                
+            # 3. Calculate the EMA starting from the seeded SMA
+            return seed.ewm(span=length, adjust=False).mean()
+            
+        return seed
+
+    # 1. Calculate Fast and Slow EMAs using the TV-matched function
+    df['MACD_Fast'] = tv_ema(close, fast)
+    df['MACD_Slow'] = tv_ema(close, slow)
     
-    df['MACD'] = fast_ema - slow_ema
-    df['MACD_Signal'] = df['MACD'].ewm(span=signal, min_periods=signal, adjust=False).mean()
+    # 2. Calculate MACD Line
+    df['MACD'] = df['MACD_Fast'] - df['MACD_Slow']
+    
+    # 3. Calculate Signal Line (Seed it with the first valid MACD SMA)
+    df['MACD_Signal'] = tv_ema(df['MACD'], signal)
+    
+    # 4. Calculate Histogram
     df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
     
     return df
