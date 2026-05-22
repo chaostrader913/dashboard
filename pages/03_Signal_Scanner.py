@@ -30,16 +30,18 @@ with col2:
 with col3:
     theme_sel = st.selectbox("THEME", ["mike", "nightclouds", "yahoo", "blueskies"], index=0)
 with col4:
+    # UPDATED: Added Natural MA and Natural Channel to default selection
     overlays = st.multiselect(
         "PRICE OVERLAYS", 
         options=["TD Sequential", "Corrected QWMA", "Jurik MA", "Natural MA", "Natural Channel", "Fast Dynamic MA", "Slow Dynamic MA", "DMA Bands"], 
-        default=["TD Sequential", "Corrected QWMA"]
+        default=["TD Sequential", "Corrected QWMA", "Natural MA", "Natural Channel"]
     )
 with col5:
+    # UPDATED: Changed default from RSI Divergence to MACD
     oscillators = st.multiselect(
         "OSCILLATORS", 
         options=["RSI Divergence", "MACD"],
-        default=["RSI Divergence"]
+        default=["MACD"]
     )
 with col6:
     use_log = st.checkbox("Logarithmic", value=True) if timeframe == "1d" else False
