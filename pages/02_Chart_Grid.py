@@ -84,12 +84,12 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.04, np.nan)
                 
                 # Setup (9) = Circles
-                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker='o', color='#00FFAA', markersize=30))
-                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker='o', color='#00FFAA', markersize=30))
+                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker='$9$', color='green', markersize=30))
+                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker='$9$', color='green', markersize=30))
                 
                 # Countdown (13) = Stars
-                if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker='*', color='#FF4B4B', markersize=70))
-                if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker='*', color='#FF4B4B', markersize=70))
+                if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker='$13$', color='red', markersize=70))
+                if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker='$13$', color='red', markersize=70))
 
             # 2. RSI Divergence Signals
             if show_rsi and 'Signal' in data.columns:
