@@ -9,7 +9,7 @@ from utils.data_loader import fetch_data
 from utils.indicators import (
     apply_td_sequential, 
     apply_corrected_qwma, 
-    apply_jurik_ma
+    apply_jma
 )
 
 # --- 1. Terminal UI Styling ---
@@ -64,7 +64,7 @@ if resample_n > 1:
 data = apply_td_sequential(data)
 data = apply_corrected_qwma(data)
 try:
-    data = apply_jurik_ma(data)
+    data = apply_jma(data)
 except Exception as e:
     st.warning(f"Note: Could not apply Jurik MA ({e})")
 
