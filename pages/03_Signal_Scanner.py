@@ -10,7 +10,8 @@ from utils.indicators import (
     apply_td_sequential, 
     apply_corrected_qwma, 
     apply_jma,
-    apply_rsi_divergence
+    apply_rsi_divergence,
+    apply_macd
 )
 
 # --- 1. Terminal UI Styling ---
@@ -28,7 +29,9 @@ with col3:
 with col4:
     # New Input: Data Resampling Multiplier
     resample_n = st.number_input("RESAMPLE (N-Periods)", min_value=1, max_value=30, value=1)
-
+with col6:
+    osc_sel = st.selectbox("OSCILLATOR", ["RSI Divergence", "MACD", "None"], index=0)
+    
 # --- 3. Data Processing & Resampling ---
 with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
     data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1wk" else "2y")
@@ -64,9 +67,13 @@ if resample_n > 1:
 # Indicators must be applied AFTER resampling so they calculate on the N-day periods
 data = apply_td_sequential(data)
 data = apply_corrected_qwma(data)
-data = apply_rsi_divergence(data)
 data = apply_jma(data)
-
+# Conditionally apply chosen oscillator
+if osc_sel == "RSI Divergence":
+    data = apply_rsi_divergence(data)
+elif osc_sel == "MACD":
+    data = apply_macd(data)
+    
 # --- 5. Heikin Ashi Calculation ---
 ha_df = data.copy()
 ha_close = (ha_df['Open'] + ha_df['High'] + ha_df['Low'] + ha_df['Close']) / 4
@@ -82,25 +89,13 @@ ha_df['HALow'] = np.minimum(ha_df['Low'], np.minimum(ha_df['HAOpen'], ha_df['HAC
 
 # Filter to the last 500 records to look clean and legible
 plot_df = data.iloc[-250:]
-plot_ha_df = ha_df.iloc[-100:]
+plot_ha_df = ha_df.iloc[-150:]
 
 # --- 6. Charting Engine (GridSpec Dashboard) ---
 st.markdown("### VISUALIZATION PANE")
 
 # Clean OHLCV data for PnF and Renko
 clean_df = plot_df[['Open', 'High', 'Low', 'Close', 'Volume']].copy().dropna()
-
-# --- BULLETPROOF BOX SIZE CALCULATION ---
-tr1 = clean_df['High'] - clean_df['Low']
-tr2 = (clean_df['High'] - clean_df['Close'].shift(1)).abs()
-tr3 = (clean_df['Low'] - clean_df['Close'].shift(1)).abs()
-true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-safe_box_size = true_range.mean()
-if pd.isna(safe_box_size) or safe_box_size <= 0:
-    safe_box_size = clean_df['Close'].iloc[-1] * 0.01
-
-safe_box_size = float(safe_box_size)
 
 # Rename HA columns so mplfinance reads them natively
 ha_render_df = plot_ha_df.copy()
@@ -131,7 +126,7 @@ try:
     mpf.plot(
         clean_df, 
         type='pnf', 
-        pnf_params=dict(box_size='atr', atr_length=14,reversal=3),
+        pnf_params=dict(box_size='2%',reversal=3),
         style=theme_sel, 
         ax=ax_pnf,
         returnfig=False
@@ -201,20 +196,26 @@ try:
         if not np.isnan(cd_sell).all():
             apds.append(mpf.make_addplot(cd_sell, type='scatter', marker='$13$', markersize=200, color='red', ax=ax_candle))
 
-    # 4. RSI & Divergence (Targeting ax_rsi)
-    if 'RSI' in ha_render_df.columns:
-        # Plot Main RSI Line
-        apds.append(mpf.make_addplot(ha_render_df['RSI'], color='#00AAFF', width=1.5, ax=ax_rsi))
+    # --- DYNAMIC OSCILLATOR PANEL ---
+    if osc_sel == "RSI Divergence" and 'RSI' in ha_render_df.columns:
+        apds.append(mpf.make_addplot(ha_render_df['RSI'], color='#00AAFF', width=1.5, ax=ax_osc))
+        apds.append(mpf.make_addplot([70]*len(ha_render_df), color='#FF4B4B', linestyle='dashed', width=1, ax=ax_osc))
+        apds.append(mpf.make_addplot([30]*len(ha_render_df), color='#00FFAA', linestyle='dashed', width=1, ax=ax_osc))
         
-        # Plot 70 and 30 Overbought/Oversold thresholds
-        apds.append(mpf.make_addplot([70]*len(ha_render_df), color='#FF4B4B', linestyle='dashed', width=1, ax=ax_rsi))
-        apds.append(mpf.make_addplot([30]*len(ha_render_df), color='#00FFAA', linestyle='dashed', width=1, ax=ax_rsi))
-        
-        # Plot Bullish Divergence Markers
         if 'Signal' in ha_render_df.columns:
             rsi_div_signals = np.where(ha_render_df['Signal'] == 1, ha_render_df['RSI'] - 5, np.nan)
             if not np.isnan(rsi_div_signals).all():
-                apds.append(mpf.make_addplot(rsi_div_signals, type='scatter', marker='^', markersize=100, color='#00FFAA', ax=ax_rsi))
+                apds.append(mpf.make_addplot(rsi_div_signals, type='scatter', marker='^', markersize=100, color='#00FFAA', ax=ax_osc))
+
+    elif osc_sel == "MACD" and 'MACD' in ha_render_df.columns:
+        # MACD Line and Signal Line
+        apds.append(mpf.make_addplot(ha_render_df['MACD'], color='#00AAFF', width=1.5, ax=ax_osc))
+        apds.append(mpf.make_addplot(ha_render_df['MACD_Signal'], color='#FFBB00', width=1.5, ax=ax_osc))
+        
+        # MACD Histogram (Colored dynamically)
+        macd_hist = ha_render_df['MACD_Hist']
+        hist_colors = ['#00FFAA' if val >= 0 else '#FF4B4B' for val in macd_hist]
+        apds.append(mpf.make_addplot(macd_hist, type='bar', color=hist_colors, ax=ax_osc))
 
     # Render Main Candle Plot
     mpf.plot(
@@ -231,7 +232,7 @@ except Exception as e:
     ax_candle.text(0.5, 0.5, f"HA Error: {e}", ha='center', va='center')
 
 # Display Figure in Streamlit
-st.pyplot(fig)
+st.pyplot(fig, use_container_width=True)
 
 # Prevent memory leaks
 plt.close(fig)
