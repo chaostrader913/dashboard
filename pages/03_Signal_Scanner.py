@@ -19,7 +19,7 @@ st.markdown("### MODULE: ADVANCED MPLFINANCE SIGNAL SCANNER")
 st.divider()
 
 # --- 2. Command Row (User Inputs) ---
-col1, col2, col3, col4 = st.columns([1.5, 1, 1, 1])
+col1, col2, col3, col4,col6 = st.columns([1.5, 1, 1, 1,1])
 with col1:
     ticker = st.text_input("TARGET ASSET", value="BTC-USD").upper()
 with col2:
