@@ -131,7 +131,7 @@ try:
     mpf.plot(
         clean_df, 
         type='pnf', 
-        pnf_params=dict(box_size=safe_box_size, reversal=3),
+        pnf_params=dict(box_size='5%', reversal=3),
         style=theme_sel, 
         ax=ax_pnf,
         returnfig=False
@@ -144,7 +144,7 @@ try:
     mpf.plot(
         clean_df, 
         type='renko', 
-        renko_params=dict(box_size=safe_box_size),
+        renko_params=dict(brick_size='atr',atr_length=14),
         style=theme_sel, 
         ax=ax_renko,
         returnfig=False
