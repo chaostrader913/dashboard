@@ -47,11 +47,19 @@ TICKER_GROUPS = {
     },
     'Commodity, Currencies & Crypto': {
         'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil', 'HG=F': 'Copper', 
-        'EURUSD=FX': 'Euro','GBPUSD=FX': 'British Pound', 'JPY=FX': 'Jap Yen', 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum'
+        'EURUSD=X': 'Euro','GBPUSD=X': 'British Pound', 'JPY=X': 'Jap Yen', 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum'
     },
     'Major Stocks by Market Cap': {
         'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'Nvidia', 'GOOGL': 'Alphabet',
-        'AMZN': 'Amazon', 'META': 'Meta', 'BRK-B': 'Berkshire', 'TSLA': 'Tesla'
+        'AMZN': 'Amazon', 'META': 'Meta', 'BRK-B': 'Berkshire', 'TSLA': 'Tesla',
+        '0700.HK': 'Tencent', '9988.HK': 'Alibaba', '0981.HK': 'SMIC', '1810.HK': 'Xiaomi',
+        '0992.HK': 'Lenovo', '1347.HK': 'Hua Hong Semiconductor', '6869.HK': 'Yangtze Optical', '0005.HK': 'HSBC',
+        '3690.HK': 'Meituan', '1299.HK': 'AIA', '1888.HK': 'Kingboard Laminates', '0883.HK': 'CNOOC',
+        '0148.HK': 'Kingboard Holdings', '2899.HK': 'Zijin Mining', '1211.HK': 'BYD', '2513.HK': 'Knowledge Atlas',
+        '3750.HK': 'CATL', '9992.HK': 'Pop Mart', '1024.HK': 'Kuaishou', '0388.HK': 'HKEX',
+        '0939.HK': 'CCB', '0941.HK': 'China Mobile', '9999.HK': 'NetEase', '9926.HK': 'Akeso',
+        '0175.HK': 'Geely', '9903.HK': 'Iluvatar CoreX', '1398.HK': 'ICBC', '1378.HK': 'China Hongqiao',
+        '2382.HK': 'Sunny Optical', '6651.HK': '51WORLD'
     }
 }
 
