@@ -109,8 +109,8 @@ has_osc = osc_sel != "None"
 grid_rows = 5 if has_osc else 4
 fig_height = 14 if has_osc else 11
 
-fig = plt.figure(figsize=(18, fig_height))
-gs = fig.add_gridspec(grid_rows, 2, width_ratios=[1, 1.5], wspace=0.15, hspace=0.4)
+fig = plt.figure(figsize=(22, fig_height))
+gs = fig.add_gridspec(grid_rows, 2, width_ratios=[1, 1.5], wspace=0.15, hspace=0.6)
 
 # 2. Assign Axes to the Grid dynamically
 ax_pnf = fig.add_subplot(gs[0:2, 0])       
@@ -124,7 +124,7 @@ if has_osc:
 
 # Set titles directly on the axes
 ax_pnf.set_title(f"Point & Figure (PnF): {ticker}", fontsize=12)
-ax_renko.set_title(f"Renko Chart: {ticker}", fontsize=12)
+ax_renko.set_title(f"Renko Chart: {ticker}", fontsize=12,pad=20)
 ax_candle.set_title("Heikin Ashi + Technicals", fontsize=12)
 
 # --- CHART 1: Point & Figure (Left Top) ---
@@ -137,6 +137,8 @@ try:
         ax=ax_pnf,
         returnfig=False
     )
+    # Hide the grid lines specifically for the PnF chart
+    ax_pnf.grid(False)
 except Exception as e:
     ax_pnf.text(0.5, 0.5, f"PnF Error: {e}", ha='center', va='center')
 
