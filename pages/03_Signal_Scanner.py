@@ -83,7 +83,7 @@ ha_df['HALow'] = np.minimum(ha_df['Low'], np.minimum(ha_df['HAOpen'], ha_df['HAC
 
 # Filter to the last 500 records to look clean and legible
 plot_df = data.iloc[-500:]
-plot_ha_df = ha_df.iloc[-200:]
+plot_ha_df = ha_df.iloc[-100:]
 
 # --- 6. Charting Engine (GridSpec Dashboard) ---
 st.markdown("### VISUALIZATION PANE")
@@ -118,7 +118,7 @@ try:
     mpf.plot(
         clean_df, 
         type='pnf', 
-        pnf_params=dict(box_size='atr', reversal=3),
+        # pnf_params=dict(box_size='atr', reversal=3),
         style=theme_sel, 
         ax=ax_pnf,
         returnfig=False
@@ -131,7 +131,7 @@ try:
     mpf.plot(
         clean_df, 
         type='renko', 
-        renko_params=dict(box_size='atr'),
+        # renko_params=dict(box_size='atr'),
         style=theme_sel, 
         ax=ax_renko,
         returnfig=False
@@ -164,9 +164,9 @@ try:
         sell_signals = np.where(ha_render_df['Setup_Signal'] == -1, ha_render_df['HAHigh'] * 1.02, np.nan)
         
         if not np.isnan(buy_signals).all():
-            apds.append(mpf.make_addplot(buy_signals, type='scatter', marker='$9$', markersize=150, color='#00FFAA', ax=ax_candle))
+            apds.append(mpf.make_addplot(buy_signals, type='scatter', marker='$9$', markersize=150, color='green', ax=ax_candle))
         if not np.isnan(sell_signals).all():
-            apds.append(mpf.make_addplot(sell_signals, type='scatter', marker='$9$', markersize=150, color='#FF4B4B', ax=ax_candle))
+            apds.append(mpf.make_addplot(sell_signals, type='scatter', marker='$9$', markersize=150, color='green', ax=ax_candle))
 
     if 'Countdown_Signal' in ha_render_df.columns:
         # Pushed slightly further away (0.96 / 1.04) so it doesn't overlap the 9 if they fire closely
@@ -174,9 +174,9 @@ try:
         cd_sell = np.where(ha_render_df['Countdown_Signal'] == -1, ha_render_df['HAHigh'] * 1.04, np.nan)
         
         if not np.isnan(cd_buy).all():
-            apds.append(mpf.make_addplot(cd_buy, type='scatter', marker='$13$', markersize=200, color='#00AAFF', ax=ax_candle))
+            apds.append(mpf.make_addplot(cd_buy, type='scatter', marker='$13$', markersize=200, color='red', ax=ax_candle))
         if not np.isnan(cd_sell).all():
-            apds.append(mpf.make_addplot(cd_sell, type='scatter', marker='$13$', markersize=200, color='#FFAA00', ax=ax_candle))
+            apds.append(mpf.make_addplot(cd_sell, type='scatter', marker='$13$', markersize=200, color='red', ax=ax_candle))
     # Render Main Candle Plot (Removed 'columns=' argument, passed ha_render_df)
     mpf.plot(
         ha_render_df, 
