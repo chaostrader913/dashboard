@@ -46,8 +46,8 @@ TICKER_GROUPS = {
         'MBB': 'MBS ETF', 'TIP': 'TIPS Bond'
     },
     'Commodity, Currencies & Crypto': {
-        'GLD': 'Gold', 'SLV': 'Silver', 'USO': 'Crude Oil', 'UUP': 'US Dollar', 
-        'FXE': 'Euro', 'FXY': 'Jap Yen', 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum'
+        'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil', 'HG=F': 'Copper', 
+        'EURUSD=FX': 'Euro','GBPUSD=FX': 'British Pound', 'JPY=FX': 'Jap Yen', 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum'
     },
     'Major Stocks by Market Cap': {
         'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'Nvidia', 'GOOGL': 'Alphabet',
@@ -93,8 +93,8 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
 
             # 2. RSI Divergence Signals
             if show_rsi and 'Signal' in data.columns:
-                rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.98, np.nan)
-                if not np.isnan(rsi_b).all(): apds.append(mpf.make_addplot(rsi_b, type='scatter', marker='^', color='#00AAFF', markersize=80))
+                rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.99, np.nan)
+                if not np.isnan(rsi_b).all(): apds.append(mpf.make_addplot(rsi_b, type='scatter', marker='^', color='yellow', markersize=80))
 
             if apds: kwargs['addplot'] = apds
 
@@ -129,7 +129,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
 # --- 4. Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ GRID CONTROLS")
-    period_sel = st.selectbox('PERIOD', ['1mo', '3mo', '6mo', '1y', '2y'], index=1)
+    period_sel = st.selectbox('PERIOD', ['1mo', '3mo', '6mo', '1y', '2y'], index=2)
     interval_sel = st.selectbox('INTERVAL', ['1d', '1h', '15m', 'Custom Days'], index=0)
     
     is_custom = (interval_sel == 'Custom Days')
