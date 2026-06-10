@@ -88,96 +88,111 @@ plot_ha_df = ha_df.iloc[-200:]
 # --- 6. Charting Engine (GridSpec Dashboard) ---
 st.markdown("### VISUALIZATION PANE")
 
-# Clean OHLCV data for PnF and Renko to prevent rendering crashes
+# Clean OHLCV data for PnF and Renko to prevent rendering crashes (Use the larger dataset)
 clean_df = plot_df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
 
+# Rename HA columns so mplfinance reads them natively
+ha_render_df = plot_ha_df.copy()
+ha_render_df['Open'] = ha_render_df['HAOpen']
+ha_render_df['High'] = ha_render_df['HAHigh']
+ha_render_df['Low'] = ha_render_df['HALow']
+ha_render_df['Close'] = ha_render_df['HAClose']
+
 # 1. Initialize Figure and GridSpec Layout
-# 4 Rows x 2 Columns. Right side is slightly wider (1.5x)
 fig = plt.figure(figsize=(18, 12))
 gs = fig.add_gridspec(4, 2, width_ratios=[1, 1.5], wspace=0.15, hspace=0.4)
 
 # 2. Assign Axes to the Grid
-ax_pnf = fig.add_subplot(gs[0:2, 0])       # Top Left
-ax_renko = fig.add_subplot(gs[2:4, 0])     # Bottom Left
-ax_candle = fig.add_subplot(gs[0:3, 1])    # Top Right (Main Price)
-ax_vol = fig.add_subplot(gs[3, 1], sharex=ax_candle)  # Bottom Right (Volume)
+ax_pnf = fig.add_subplot(gs[0:2, 0])       
+ax_renko = fig.add_subplot(gs[2:4, 0])     
+ax_candle = fig.add_subplot(gs[0:3, 1])    
+ax_vol = fig.add_subplot(gs[3, 1], sharex=ax_candle) 
 
+# Set titles directly on the axes
+ax_pnf.set_title(f"Point & Figure (PnF): {ticker}", fontsize=12)
+ax_renko.set_title(f"Renko Chart: {ticker}", fontsize=12)
+ax_candle.set_title("Heikin Ashi + Technicals", fontsize=12)
+
+# --- CHART 1: Point & Figure (Left Top) ---
 try:
-    # --- CHART 1: Point & Figure (Left Top) ---
     mpf.plot(
         clean_df, 
         type='pnf', 
         pnf_params=dict(box_size='atr', reversal=3),
         style=theme_sel, 
         ax=ax_pnf,
-        axtitle=f"Point & Figure (PnF): {ticker}",
         returnfig=False
     )
-    
-    # --- CHART 2: Renko (Left Bottom) ---
+except Exception as e:
+    ax_pnf.text(0.5, 0.5, f"PnF Error: {e}", ha='center', va='center')
+
+# --- CHART 2: Renko (Left Bottom) ---
+try:
     mpf.plot(
         clean_df, 
         type='renko', 
         renko_params=dict(box_size='atr'),
         style=theme_sel, 
         ax=ax_renko,
-        axtitle=f"Renko Chart: {ticker}",
         returnfig=False
     )
-    
-    # --- CHART 3: Heikin Ashi + Indicators (Right Side) ---
+except Exception as e:
+    ax_renko.text(0.5, 0.5, f"Renko Error: {e}", ha='center', va='center')
+
+# --- CHART 3: Heikin Ashi + Indicators (Right Side) ---
+try:
     apds = []
     
-    # Corrected QWMA Lines (Must assign to ax_candle)
-    if 'CQWMA' in plot_ha_df.columns:
-        apds.append(mpf.make_addplot(plot_ha_df['CQWMA'], color='#00FFAA', width=2, ax=ax_candle))
-    if 'CQWMA_Mid' in plot_ha_df.columns:
-        apds.append(mpf.make_addplot(plot_ha_df['CQWMA_Mid'], color='#888888', linestyle='dashed', width=1, ax=ax_candle))
-    if 'CQWMA_Up' in plot_ha_df.columns:
-        apds.append(mpf.make_addplot(plot_ha_df['CQWMA_Up'], color='#00FF00', linestyle='dotted', width=1, ax=ax_candle))
-    if 'CQWMA_Down' in plot_ha_df.columns:
-        apds.append(mpf.make_addplot(plot_ha_df['CQWMA_Down'], color='#FF0000', linestyle='dotted', width=1, ax=ax_candle))
+    # Corrected QWMA Lines 
+    if 'CQWMA' in ha_render_df.columns:
+        apds.append(mpf.make_addplot(ha_render_df['CQWMA'], color='#00FFAA', width=2, ax=ax_candle))
+    if 'CQWMA_Mid' in ha_render_df.columns:
+        apds.append(mpf.make_addplot(ha_render_df['CQWMA_Mid'], color='#888888', linestyle='dashed', width=1, ax=ax_candle))
+    if 'CQWMA_Up' in ha_render_df.columns:
+        apds.append(mpf.make_addplot(ha_render_df['CQWMA_Up'], color='#00FF00', linestyle='dotted', width=1, ax=ax_candle))
+    if 'CQWMA_Down' in ha_render_df.columns:
+        apds.append(mpf.make_addplot(ha_render_df['CQWMA_Down'], color='#FF0000', linestyle='dotted', width=1, ax=ax_candle))
         
     # Jurik MA Line
-    jma_cols = [c for c in plot_ha_df.columns if 'jurik' in c.lower() or 'jma' in c.lower()]
+    jma_cols = [c for c in ha_render_df.columns if 'jurik' in c.lower() or 'jma' in c.lower()]
     if jma_cols:
-        apds.append(mpf.make_addplot(plot_ha_df[jma_cols[0]], color='#FFAA00', width=1.5, ax=ax_candle))
+        apds.append(mpf.make_addplot(ha_render_df[jma_cols[0]], color='#FFAA00', width=1.5, ax=ax_candle))
         
-    # TD Sequential Markers
-    if 'Setup_Signal' in plot_ha_df.columns:
-        buy_signals = np.where(plot_ha_df['Setup_Signal'] == 1, plot_ha_df['HALow'] * 0.98, np.nan)
-        sell_signals = np.where(plot_ha_df['Setup_Signal'] == -1, plot_ha_df['HAHigh'] * 1.02, np.nan)
+# 3. TD Sequential Markers (Using text markers '9' and '13')
+    if 'Setup_Signal' in ha_render_df.columns:
+        buy_signals = np.where(ha_render_df['Setup_Signal'] == 1, ha_render_df['HALow'] * 0.98, np.nan)
+        sell_signals = np.where(ha_render_df['Setup_Signal'] == -1, ha_render_df['HAHigh'] * 1.02, np.nan)
+        
         if not np.isnan(buy_signals).all():
-            apds.append(mpf.make_addplot(buy_signals, type='scatter', marker='^', markersize=100, color='#00FFAA', ax=ax_candle))
+            apds.append(mpf.make_addplot(buy_signals, type='scatter', marker='$9$', markersize=150, color='#00FFAA', ax=ax_candle))
         if not np.isnan(sell_signals).all():
-            apds.append(mpf.make_addplot(sell_signals, type='scatter', marker='v', markersize=100, color='#FF4B4B', ax=ax_candle))
+            apds.append(mpf.make_addplot(sell_signals, type='scatter', marker='$9$', markersize=150, color='#FF4B4B', ax=ax_candle))
 
-    if 'Countdown_Signal' in plot_ha_df.columns:
-        cd_buy = np.where(plot_ha_df['Countdown_Signal'] == 1, plot_ha_df['HALow'] * 0.96, np.nan)
-        cd_sell = np.where(plot_ha_df['Countdown_Signal'] == -1, plot_ha_df['HAHigh'] * 1.04, np.nan)
+    if 'Countdown_Signal' in ha_render_df.columns:
+        # Pushed slightly further away (0.96 / 1.04) so it doesn't overlap the 9 if they fire closely
+        cd_buy = np.where(ha_render_df['Countdown_Signal'] == 1, ha_render_df['HALow'] * 0.96, np.nan)
+        cd_sell = np.where(ha_render_df['Countdown_Signal'] == -1, ha_render_df['HAHigh'] * 1.04, np.nan)
+        
         if not np.isnan(cd_buy).all():
-            apds.append(mpf.make_addplot(cd_buy, type='scatter', marker='*', markersize=120, color='#00AAFF', ax=ax_candle))
+            apds.append(mpf.make_addplot(cd_buy, type='scatter', marker='$13$', markersize=200, color='#00AAFF', ax=ax_candle))
         if not np.isnan(cd_sell).all():
-            apds.append(mpf.make_addplot(cd_sell, type='scatter', marker='*', markersize=120, color='#FFAA00', ax=ax_candle))
-
-    # Render Main Candle Plot
+            apds.append(mpf.make_addplot(cd_sell, type='scatter', marker='$13$', markersize=200, color='#FFAA00', ax=ax_candle))
+    # Render Main Candle Plot (Removed 'columns=' argument, passed ha_render_df)
     mpf.plot(
-        plot_ha_df, 
+        ha_render_df, 
         type='candle', 
         style=theme_sel, 
         ax=ax_candle,
         volume=ax_vol,
-        columns=['HAOpen', 'HAHigh', 'HALow', 'HAClose', 'Volume'],
         addplot=apds if apds else None,
-        axtitle="Heikin Ashi + Technicals",
         returnfig=False
     )
-
-    # Display Figure
-    st.pyplot(fig)
     
 except Exception as e:
-    st.error(f"Error rendering dashboard: {e}")
-finally:
-    # Prevents memory leak in Streamlit
-    plt.close(fig)
+    ax_candle.text(0.5, 0.5, f"HA Error: {e}", ha='center', va='center')
+
+# Display Figure in Streamlit
+st.pyplot(fig)
+
+# Prevent memory leaks
+plt.close(fig)
