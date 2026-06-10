@@ -30,15 +30,26 @@ TICKER_GROUPS = {
     'Sectors (US)': {
         'XLK': 'Technology', 'XLV': 'Healthcare', 'XLF': 'Financials', 'XLE': 'Energy', 
         'XLI': 'Industrials', 'XLY': 'Cons. Disc.', 'XLP': 'Cons. Staples', 
-        'XLU': 'Utilities', 'XLB': 'Materials', 'XLRE': 'Real Estate', 'XLC': 'Comm. Svcs'
+        'XLU': 'Utilities', 'XLB': 'Materials', 'XLRE': 'Real Estate', 'XLC': 'Comm. Svcs',
+        'SMH': 'Semiconductors', 'IGV': 'Software'
     },
-    'Themes (US)': {
-        'SMH': 'Semiconductors', 'IGV': 'Software', 'XBI': 'Biotech', 'ARKK': 'Innovation', 
-        'TAN': 'Solar', 'URA': 'Uranium', 'LIT': 'Lithium', 'PAVE': 'Infrastructure'
+    'Major Stocks (US)': {
+        'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'Nvidia', 'GOOGL': 'Alphabet',
+        'AMZN': 'Amazon', 'META': 'Meta', 'BRK-B': 'Berkshire', 'TSLA': 'Tesla'
     },
     'International': {
-        'VEA': 'Dev ex-US', 'VWO': 'Emerging Mkts', 'EWJ': 'Japan', 
-        'FXI': 'China Large', 'INDA': 'India', 'EWG': 'Germany', 'EWU': 'UK', 'EWZ': 'Brazil'
+        'EFA': 'iShares MSCI EAFE', 'EEM': 'iShares MSCI EM', 
+        'EWC': 'iShares MSCI Canada ETF', 'EWA': 'iShares MSCI Australia ETF', 
+        'ENZL': 'iShares MSCI New Zealand ETF', 'EWU': 'iShares MSCI United Kingdom ETF',
+        'EWQ': 'iShares MSCI France ETF', 'EWG': 'iShares MSCI Germany ETF', 
+        'EWJ': 'iShares MSCI Japan ETF', 'EWH': 'iShares MSCI Hong Kong ETF',
+        'MCHI': 'iShares MSCI China ETF', 'EWT': 'iShares MSCI Taiwan ETF', 
+        'EWY': 'iShares MSCI South Korea ETF', 'INDA': 'iShares MSCI India ETF',
+        'EWZ': 'iShares MSCI Brazil ETF', 'EZA': 'iShares MSCI South Africa ETF', 
+        'EWW': 'iShares MSCI Mexico ETF','AAXJ': 'iShares MSCI AXASJ',
+        'EWS': 'iShares MSCI Singapore ETF', 'EWM': 'iShares MSCI Malaysia ETF', 
+        'THD': 'iShares MSCI Thailand ETF', 'EIDO': 'iShares MSCI Indonesia ETF', 
+        'EPHE': 'iShares MSCI Philippines ETF'
     },
     'Fixed Income ETFs': {
         'SHY': '1-3Y Treas', 'IEF': '7-10Y Treas', 'TLT': '20Y+ Treas',
@@ -49,9 +60,7 @@ TICKER_GROUPS = {
         'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil', 'HG=F': 'Copper', 
         'EURUSD=X': 'Euro','GBPUSD=X': 'British Pound', 'JPY=X': 'Jap Yen', 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum'
     },
-    'Major Stocks by Market Cap': {
-        'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'Nvidia', 'GOOGL': 'Alphabet',
-        'AMZN': 'Amazon', 'META': 'Meta', 'BRK-B': 'Berkshire', 'TSLA': 'Tesla',
+    'Major Hong Kong Stocks by Market Cap': {
         '0700.HK': 'Tencent', '9988.HK': 'Alibaba', '0981.HK': 'SMIC', '1810.HK': 'Xiaomi',
         '0992.HK': 'Lenovo', '1347.HK': 'Hua Hong Semiconductor', '6869.HK': 'Yangtze Optical', '0005.HK': 'HSBC',
         '3690.HK': 'Meituan', '1299.HK': 'AIA', '1888.HK': 'Kingboard Laminates', '0883.HK': 'CNOOC',
