@@ -11,7 +11,7 @@ matplotlib.use('Agg')
 
 # --- IMPORT GLOBALS ---
 from utils.data_loader import fetch_data
-from utils.indicators import apply_td_sequential, apply_rsi_divergence
+from utils.indicators import apply_td_sequential, apply_rsi_divergence, apply_jma
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -68,7 +68,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
             title=f"{name} ({ticker})", figsize=(5, 3.2)
         )
         
-        if show_sma and mpf_type not in ['renko', 'pnf']: kwargs['mav'] = (20,)
+        if show_sma and mpf_type not in ['renko', 'pnf']: kwargs['mav'] = (20,50)
         if show_vol and 'Volume' in data.columns: kwargs['volume'] = True
         if mpf_type == 'renko': kwargs['renko_params'] = {'brick_size': 'atr'}
         elif mpf_type == 'pnf': kwargs['pnf_params'] = {'box_size': 'atr'}
@@ -80,12 +80,12 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
             if show_tdsq and 'Setup_Signal' in data.columns:
                 b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
                 s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
-                b13 = np.where(data['Countdown_Signal'] == 1, data['Low'] * 0.96, np.nan)
-                s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.04, np.nan)
+                b13 = np.where(data['Countdown_Signal'] == 1, data['Low'] * 0.99, np.nan)
+                s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.01, np.nan)
                 
                 # Setup (9) = Circles
-                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker='$9$', color='green', markersize=30))
-                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker='$9$', color='green', markersize=30))
+                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker='$9$', color='green', markersize=50))
+                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker='$9$', color='green', markersize=50))
                 
                 # Countdown (13) = Stars
                 if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker='$13$', color='red', markersize=70))
@@ -93,7 +93,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
 
             # 2. RSI Divergence Signals
             if show_rsi and 'Signal' in data.columns:
-                rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.95, np.nan)
+                rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.98, np.nan)
                 if not np.isnan(rsi_b).all(): apds.append(mpf.make_addplot(rsi_b, type='scatter', marker='^', color='#00AAFF', markersize=80))
 
             if apds: kwargs['addplot'] = apds
@@ -141,7 +141,7 @@ with st.sidebar:
     
     st.divider()
     st.markdown("#### OVERLAYS")
-    sma_check = st.checkbox('20 SMA', value=True)
+    sma_check = st.checkbox('SMA', value=True)
     vol_check = st.checkbox('VOLUME', value=True)
     
     tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
