@@ -21,7 +21,7 @@ col1, col2, col3, col4 = st.columns([1.5, 1, 1, 1])
 with col1:
     ticker = st.text_input("TARGET ASSET", value="BTC-USD").upper()
 with col2:
-    timeframe = st.selectbox("TIMEFRAME", options=["1d", "1w", "1h"], index=0)
+    timeframe = st.selectbox("TIMEFRAME", options=["1d", "1wk", "1h"], index=0)
 with col3:
     theme_sel = st.selectbox("STYLE / THEME", ["mike", "classic", "charles", "yahoo"], index=0)
 with col4:
@@ -30,7 +30,7 @@ with col4:
 
 # --- 3. Data Processing & Resampling ---
 with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
-    data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1w" else "1y")
+    data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1wk" else "2y")
 
 if data is None or data.empty:
     st.error(f"ERR: NO DATA FOUND FOR {ticker}.")
@@ -187,8 +187,8 @@ try:
 
     if 'Countdown_Signal' in ha_render_df.columns:
         # Pushed slightly further away (0.96 / 1.04) so it doesn't overlap the 9 if they fire closely
-        cd_buy = np.where(ha_render_df['Countdown_Signal'] == 1, ha_render_df['HALow'] * 0.96, np.nan)
-        cd_sell = np.where(ha_render_df['Countdown_Signal'] == -1, ha_render_df['HAHigh'] * 1.04, np.nan)
+        cd_buy = np.where(ha_render_df['Countdown_Signal'] == 1, ha_render_df['HALow'] * 0.99, np.nan)
+        cd_sell = np.where(ha_render_df['Countdown_Signal'] == -1, ha_render_df['HAHigh'] * 1.01, np.nan)
         
         if not np.isnan(cd_buy).all():
             apds.append(mpf.make_addplot(cd_buy, type='scatter', marker='$13$', markersize=200, color='red', ax=ax_candle))
