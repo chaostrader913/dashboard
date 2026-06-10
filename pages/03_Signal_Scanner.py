@@ -131,7 +131,7 @@ try:
     mpf.plot(
         clean_df, 
         type='pnf', 
-        pnf_params=dict(box_size='5%', reversal=3),
+        pnf_params=dict(box_size='atr', atr_length=14,reversal=3),
         style=theme_sel, 
         ax=ax_pnf,
         returnfig=False
