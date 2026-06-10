@@ -21,7 +21,7 @@ col1, col2, col3, col4 = st.columns([1.5, 1, 1, 1])
 with col1:
     ticker = st.text_input("TARGET ASSET", value="BTC-USD").upper()
 with col2:
-    timeframe = st.selectbox("TIMEFRAME", options=["1d", "1h", "15m"], index=0)
+    timeframe = st.selectbox("TIMEFRAME", options=["1d", "1w", "1h"], index=0)
 with col3:
     theme_sel = st.selectbox("STYLE / THEME", ["mike", "classic", "charles", "yahoo"], index=0)
 with col4:
@@ -30,7 +30,7 @@ with col4:
 
 # --- 3. Data Processing & Resampling ---
 with st.spinner(f"EXECUTING ALGORITHMS FOR {ticker}..."):
-    data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1d" else "60d")
+    data = fetch_data(ticker, interval=timeframe, period="5y" if timeframe == "1w" else "1y")
 
 if data is None or data.empty:
     st.error(f"ERR: NO DATA FOUND FOR {ticker}.")
@@ -82,7 +82,7 @@ ha_df['HAHigh'] = np.maximum(ha_df['High'], np.maximum(ha_df['HAOpen'], ha_df['H
 ha_df['HALow'] = np.minimum(ha_df['Low'], np.minimum(ha_df['HAOpen'], ha_df['HAClose']))
 
 # Filter to the last 500 records to look clean and legible
-plot_df = data.iloc[-500:]
+plot_df = data.iloc[-250:]
 plot_ha_df = ha_df.iloc[-100:]
 
 # --- 6. Charting Engine (GridSpec Dashboard) ---
@@ -143,9 +143,26 @@ except Exception as e:
 try:
     apds = []
     
-    # Corrected QWMA Lines 
+    # Corrected QWMA Lines (Color mapped by slope direction)
     if 'CQWMA' in ha_render_df.columns:
-        apds.append(mpf.make_addplot(ha_render_df['CQWMA'], color='#00FFAA', width=2, ax=ax_candle))
+        cqwma = ha_render_df['CQWMA']
+        
+        # Calculate the slope (difference from previous point). Fill NaN with 1 so the start doesn't break.
+        cqwma_diff = cqwma.diff().fillna(1)
+        
+        # To prevent visual gaps, a point is part of a line if its current slope OR the NEXT point's slope matches
+        up_mask = (cqwma_diff >= 0) | (cqwma_diff.shift(-1) >= 0)
+        dn_mask = (cqwma_diff < 0) | (cqwma_diff.shift(-1) < 0)
+        
+        # Apply masks
+        cqwma_up_line = cqwma.where(up_mask, np.nan)
+        cqwma_dn_line = cqwma.where(dn_mask, np.nan)
+        
+        # Plot the overlapping segments
+        apds.append(mpf.make_addplot(cqwma_up_line, color='#00FFAA', width=2, ax=ax_candle))
+        apds.append(mpf.make_addplot(cqwma_dn_line, color='#FF4B4B', width=2, ax=ax_candle))
+        
+        # (Optional) Retain the floating bands
     if 'CQWMA_Mid' in ha_render_df.columns:
         apds.append(mpf.make_addplot(ha_render_df['CQWMA_Mid'], color='#888888', linestyle='dashed', width=1, ax=ax_candle))
     if 'CQWMA_Up' in ha_render_df.columns:
