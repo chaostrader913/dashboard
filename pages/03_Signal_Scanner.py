@@ -104,22 +104,28 @@ ha_render_df['High'] = ha_render_df['HAHigh']
 ha_render_df['Low'] = ha_render_df['HALow']
 ha_render_df['Close'] = ha_render_df['HAClose']
 
-# 1. Initialize Figure and GridSpec Layout (Now 5 rows to fit RSI)
-fig = plt.figure(figsize=(18, 14))
-gs = fig.add_gridspec(5, 2, width_ratios=[1, 1.5], wspace=0.15, hspace=0.4)
+# 1. Initialize Dynamic Figure and GridSpec Layout
+has_osc = osc_sel != "None"
+grid_rows = 5 if has_osc else 4
+fig_height = 14 if has_osc else 11
 
-# 2. Assign Axes to the Grid
+fig = plt.figure(figsize=(18, fig_height))
+gs = fig.add_gridspec(grid_rows, 2, width_ratios=[1, 1.5], wspace=0.15, hspace=0.4)
+
+# 2. Assign Axes to the Grid dynamically
 ax_pnf = fig.add_subplot(gs[0:2, 0])       
-ax_renko = fig.add_subplot(gs[2:5, 0])     # Stretch Renko slightly to match height
+ax_renko = fig.add_subplot(gs[2:grid_rows, 0]) # Stretch to bottom of grid     
 ax_candle = fig.add_subplot(gs[0:3, 1])    
 ax_vol = fig.add_subplot(gs[3, 1], sharex=ax_candle) 
-ax_rsi = fig.add_subplot(gs[4, 1], sharex=ax_candle) # New RSI Axis
+
+if has_osc:
+    ax_osc = fig.add_subplot(gs[4, 1], sharex=ax_candle)
+    ax_osc.set_title(osc_sel, fontsize=10)
 
 # Set titles directly on the axes
 ax_pnf.set_title(f"Point & Figure (PnF): {ticker}", fontsize=12)
 ax_renko.set_title(f"Renko Chart: {ticker}", fontsize=12)
 ax_candle.set_title("Heikin Ashi + Technicals", fontsize=12)
-ax_rsi.set_title("RSI & Divergence", fontsize=10)
 
 # --- CHART 1: Point & Figure (Left Top) ---
 try:
