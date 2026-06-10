@@ -1,5 +1,5 @@
 import streamlit as st
-
+st.set_page_config(layout="wide")
 # 1. Define your pages using st.Page
 # The first argument is the exact file path. 
 # You can optionally add a clean title and an emoji icon for the sidebar.
