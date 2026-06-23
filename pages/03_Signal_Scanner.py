@@ -114,7 +114,7 @@ gs = fig.add_gridspec(grid_rows, 2, width_ratios=[1, 1.5], wspace=0.15, hspace=0
 
 # 2. Assign Axes to the Grid dynamically
 ax_pnf = fig.add_subplot(gs[0:2, 0])       
-ax_renko = fig.add_subplot(gs[2:grid_rows, 0]) # Stretch to bottom of grid     
+ax_renko = fig.add_subplot(gs[3:grid_rows, 0]) # Stretch to bottom of grid     
 ax_candle = fig.add_subplot(gs[0:3, 1])    
 ax_vol = fig.add_subplot(gs[3, 1], sharex=ax_candle) 
 
@@ -197,7 +197,7 @@ try:
 
     if 'Countdown_Signal' in ha_render_df.columns:
         cd_buy = np.where(ha_render_df['Countdown_Signal'] == 1, ha_render_df['HALow'] * 0.99, np.nan)
-        cd_sell = np.where(ha_render_df['Countdown_Signal'] == -1, ha_render_df['HAHigh'] * 1.1, np.nan)
+        cd_sell = np.where(ha_render_df['Countdown_Signal'] == -1, ha_render_df['HAHigh'] * 1.01, np.nan)
         
         if not np.isnan(cd_buy).all():
             apds.append(mpf.make_addplot(cd_buy, type='scatter', marker='$13$', markersize=200, color='red', ax=ax_candle))
