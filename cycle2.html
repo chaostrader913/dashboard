@@ -44,8 +44,11 @@
                 </select>
 
                 <input type="text" id="tickerInput" value="CL=F" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase" placeholder="Ticker">
+                
                 <button id="loadBtn" onclick="runScanner()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-md text-sm font-semibold transition-colors flex items-center gap-1" title="Load from Yahoo Finance">
-                    <i data-lucide="download" class="w-4 h-4"></i> Web
+                    <i data-lucide="download" id="downloadIcon" class="w-4 h-4"></i>
+                    <i data-lucide="loader" id="loaderIcon" class="w-4 h-4 animate-spin hidden"></i>
+                    <span>Web</span>
                 </button>
             </div>
             
@@ -384,4 +387,226 @@
             // Auto-select the top 2
             activeCycleLengths.clear();
             for(let i=0; i<Math.min(2, analyzedCycles.length); i++){
-                activeCycleLengths.add(analyzedCycles[i].len
+                activeCycleLengths.add(analyzedCycles[i].len);
+            }
+        }
+
+        // --- UI & RENDERERS ---
+
+        function updateUI() {
+            renderTable();
+            renderCharts();
+        }
+
+        function toggleCycle(len) {
+            if (activeCycleLengths.has(len)) {
+                activeCycleLengths.delete(len);
+            } else {
+                activeCycleLengths.add(len);
+            }
+            renderCharts(); 
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+            
+            analyzedCycles.forEach(c => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-blue-50 transition-colors";
+                
+                const isChecked = activeCycleLengths.has(c.len) ? 'checked' : '';
+                const pillClass = c.bullish ? 'pill-green' : 'pill-red';
+                
+                tr.innerHTML = `
+                    <td class="py-2 pl-2 text-center">
+                        <input type="checkbox" ${isChecked} onchange="toggleCycle(${c.len})" class="w-4 h-4 text-blue-600 rounded border-gray-300 cursor-pointer focus:ring-blue-500">
+                    </td>
+                    <td class="py-2"><span class="${pillClass}">${c.len}</span></td>
+                    <td class="py-2 font-medium">${c.amp.toFixed(2)}</td>
+                    <td class="py-2 text-slate-500">${c.strg.toFixed(4)}</td>
+                    <td class="py-2 pr-2 font-medium">${c.stab.toFixed(2)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderCharts() {
+            const n = rawData.length;
+            const futureBars = 100;
+            const totalBars = n + futureBars;
+
+            // Generate Composite Wave
+            let compositeWave = new Array(totalBars).fill(0);
+            let active = analyzedCycles.filter(c => activeCycleLengths.has(c.len));
+            
+            for (let i = 0; i < totalBars; i++) {
+                let x = i - (n - 1); 
+                active.forEach(c => {
+                    let omega = 2 * Math.PI / c.len;
+                    // MULTIPLIED BY STABILITY
+                    compositeWave[i] += (c.amp * c.stab) * Math.cos(omega * x + c.phase);
+                });
+            }
+
+            // Scale Composite Wave to ~85% of price chart amplitude
+            let pMin = Math.min(...rawData);
+            let pMax = Math.max(...rawData);
+            let cMin = Math.min(...compositeWave);
+            let cMax = Math.max(...compositeWave);
+            
+            let compositeScaled = [];
+            if (active.length > 0 && cMax !== cMin) {
+                let pMid = (pMax + pMin) / 2;
+                let cMid = (cMax + cMin) / 2;
+                let scaleFactor = (pMax - pMin) * 0.85 / (cMax - cMin);
+                compositeScaled = compositeWave.map(v => ((v - cMid) * scaleFactor) + pMid);
+            } else {
+                compositeScaled = new Array(totalBars).fill((pMax + pMin) / 2);
+            }
+
+            // Extend Dates on X Axis
+            let allDates = [...dates];
+            let lastDate = new Date(dates[dates.length - 1]);
+            
+            const tfSelect = document.getElementById('timeframeSelect');
+            const currentTf = tfSelect ? tfSelect.value : '1d';
+
+            for (let i = 1; i <= futureBars; i++) {
+                let d = new Date(lastDate);
+                
+                if (currentTf === '1wk') {
+                    d.setDate(d.getDate() + (i * 7)); 
+                } else if (currentTf === '1mo') {
+                    d.setMonth(d.getMonth() + i);     
+                } else {
+                    d.setDate(d.getDate() + i);       
+                }
+                
+                allDates.push(d.toISOString().split('T')[0]);
+            }
+
+            // --- 1. MAIN PRICE CHART ---
+            let tracePrice = {
+                x: dates, y: rawData, type: 'scatter', mode: 'lines',
+                line: {color: '#2B4A6F', width: 1.5}, name: 'Price'
+            };
+            let traceComp = {
+                x: allDates, y: compositeScaled, type: 'scatter', mode: 'lines',
+                line: {color: '#FF00FF', width: 2, shape: 'spline'}, name: 'Composite Projection'
+            };
+
+            let layoutMain = {
+                title: {text: `${currentTicker} Price and Composite Cycle`, font:{size: 14}, x: 0.02},
+                margin: { l: 40, r: 20, t: 40, b: 20 },
+                legend: { orientation: "h", y: 1.1, x: 1, xanchor: 'right' },
+                shapes: [{
+                    type: 'line', x0: dates[dates.length-1], x1: dates[dates.length-1],
+                    y0: 0, y1: 1, yref: 'paper',
+                    line: { color: 'grey', width: 1, dash: 'dash' }
+                }],
+                plot_bgcolor: 'white',
+                paper_bgcolor: 'white',
+                xaxis: { showgrid: true, gridcolor: '#f1f5f9' },
+                yaxis: { showgrid: true, gridcolor: '#f1f5f9' }
+            };
+
+            Plotly.react('mainChart', [tracePrice, traceComp], layoutMain, {displayModeBar: false, responsive: true});
+
+            // --- 2. SPECTRUM CHART ---
+            let traceSpecFill = {
+                x: spectrumData.lengths, y: spectrumData.amps,
+                fill: 'tozeroy', type: 'scatter', mode: 'lines',
+                line: {color: '#2B4A6F', width: 1},
+                fillcolor: 'rgba(140, 158, 186, 0.4)',
+                name: 'Full Spectrum', hoverinfo: 'none'
+            };
+
+            let bullishX=[], bullishY=[], bearishX=[], bearishY=[];
+            analyzedCycles.forEach(c => {
+                if(c.bullish) { bullishX.push(c.len); bullishY.push(c.amp); }
+                else { bearishX.push(c.len); bearishY.push(c.amp); }
+            });
+
+            let traceBull = {
+                x: bullishX, y: bullishY, type: 'scatter', mode: 'markers',
+                marker: {symbol: 'triangle-up', color: '#4CAF50', size: 12, line:{color:'darkgreen', width:1}},
+                name: 'Bullish Cycle'
+            };
+            
+            let traceBear = {
+                x: bearishX, y: bearishY, type: 'scatter', mode: 'markers',
+                marker: {symbol: 'triangle-down', color: '#F44336', size: 12, line:{color:'darkred', width:1}},
+                name: 'Bearish Cycle'
+            };
+
+            let layoutSpec = {
+                title: {text: 'Cycle Spectrum Periodogram', font:{size: 14}, x: 0.02},
+                margin: { l: 40, r: 20, t: 40, b: 30 },
+                legend: { orientation: "v", y: 1, x: 1, xanchor: 'right' },
+                plot_bgcolor: 'white',
+                paper_bgcolor: 'white',
+                xaxis: { title: 'Cycle Length (Bars)', range: [0, 420], showgrid: true, gridcolor: '#f1f5f9' },
+                yaxis: { title: 'Amplitude', showgrid: true, gridcolor: '#f1f5f9' }
+            };
+
+            Plotly.react('spectrumChart', [traceSpecFill, traceBull, traceBear], layoutSpec, {displayModeBar: false, responsive: true});
+        }
+
+        // Action Handlers
+        function updateThreshold(val) {
+            currentThreshold = parseFloat(val);
+            document.getElementById('thresholdValue').innerText = Math.round(currentThreshold * 100) + '%';
+            if (rawData.length > 0) {
+                calculateCycles();
+                updateUI();
+            }
+        }
+
+        async function runScanner() {
+            const btn = document.getElementById('loadBtn');
+            const downloadIcon = document.getElementById('downloadIcon');
+            const loaderIcon = document.getElementById('loaderIcon');
+            const tickerInput = document.getElementById('tickerInput').value.trim().toUpperCase();
+            const timeframe = document.getElementById('timeframeSelect').value; 
+            
+            if (!tickerInput) return;
+
+            currentTicker = tickerInput;
+            
+            // Toggle icons and disable button
+            btn.disabled = true;
+            downloadIcon.classList.add('hidden');
+            loaderIcon.classList.remove('hidden');
+
+            try {
+                let dataObj = await fetchYahooData(currentTicker, timeframe);
+                rawData = dataObj.prices;
+                dates = dataObj.dates;
+                
+                if (rawData.length < 100) {
+                    showToast(`Not enough historical data available for ${currentTicker}. Need longer history for this timeframe.`);
+                } else {
+                    detrendedData = detrendData(rawData);
+                    calculateCycles();
+                    updateUI();
+                }
+            } catch (err) {
+                console.error(err);
+                showToast(`Unable to fetch Web Data for ${currentTicker}. Public proxies may be blocked. Please use the CSV upload button instead.`);
+            } finally {
+                // Revert toggle back to normal state
+                btn.disabled = false;
+                loaderIcon.classList.add('hidden');
+                downloadIcon.classList.remove('hidden');
+            }
+        }
+
+        // Initialize UI without triggering faulty fetch
+        window.onload = () => {
+            showToast("Please enter a ticker and click Web, or upload your CL1.xlsx CSV file.");
+        };
+
+    </script>
+</body>
+</html>
