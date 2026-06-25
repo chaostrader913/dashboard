@@ -63,8 +63,8 @@
             
             <div class="flex items-center gap-2">
                 <label class="text-sm font-semibold text-slate-600">Stability:</label>
-                <input type="range" id="thresholdSlider" min="0" max="1" step="0.01" value="0.40" class="w-24 cursor-pointer" onchange="updateThreshold(this.value)">
-                <span id="thresholdValue" class="text-sm font-bold text-blue-600 w-10 text-right">40%</span>
+                <input type="range" id="thresholdSlider" min="0" max="1" step="0.01" value="0.50" class="w-24 cursor-pointer" onchange="updateThreshold(this.value)">
+                <span id="thresholdValue" class="text-sm font-bold text-blue-600 w-10 text-right">50%</span>
             </div>
             
         </div>
@@ -84,7 +84,7 @@
         <div class="w-96 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col">
             <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-xl">
                 <h3 class="text-base font-bold text-slate-700">Cycle Spectrum Data</h3>
-                <span class="text-xs text-slate-500 font-medium">Ranked by Stability</span>
+                <span class="text-xs text-slate-500 font-medium">Ranked by Strength</span>
             </div>
             <div class="table-container p-2">
                 <table class="w-full text-sm text-right">
@@ -115,7 +115,7 @@
         let analyzedCycles = [];
         let spectrumData = { lengths: [], amps: [] };
         let activeCycleLengths = new Set();
-        let currentThreshold = 0.40;
+        let currentThreshold = 0.50; // Updated to 50% based on FSC Whitepaper
         let currentTicker = "CL=F";
 
         // Toast Notification System
@@ -254,29 +254,76 @@
 
         // --- MATHEMATICS & ALGORITHMS ---
 
-        // 2. Detrending (50-bar Centered Moving Average High-Pass Filter)
+        // 2. Detrending (Hodrick-Prescott Filter via O(N) Banded Cholesky Factorization)
         function detrendData(data) {
             const n = data.length;
-            const detrended = new Array(n);
+            if (n < 4) return data; 
             
-            // Dynamically size the window (max 50 bars, or smaller for short datasets)
-            const windowSize = Math.min(50, Math.floor(n / 4));
-            const halfWindow = Math.floor(windowSize / 2);
+            // Set Lambda (Penalty parameter) based on frequency
+            let lambda = 100000; 
+            const tfSelect = document.getElementById('timeframeSelect');
+            const tf = tfSelect ? tfSelect.value : '1d';
+            
+            if (tf === '1mo') lambda = 129600;      
+            if (tf === '1wk') lambda = 1000000;     
+            if (tf === '1d')  lambda = 10000000;    
 
+            // Allocate banded matrix arrays
+            let d = new Float64Array(n);
+            let e = new Float64Array(n);
+            let f = new Float64Array(n);
+            
+            let a = new Float64Array(n);
+            let b = new Float64Array(n);
+            let c = new Float64Array(n);
+            
             for (let i = 0; i < n; i++) {
-                // Calculate dynamic bounds to keep the average centered
-                let start = Math.max(0, i - halfWindow);
-                let end = Math.min(n - 1, i + halfWindow);
-                let count = end - start + 1;
-                
-                let sum = 0;
-                for (let j = start; j <= end; j++) {
-                    sum += data[j];
-                }
-                
-                let localMean = sum / count;
-                // Subtract the local mean from the raw price to isolate the oscillation
-                detrended[i] = data[i] - localMean;
+                a[i] = 1 + 6 * lambda;
+                b[i] = -4 * lambda;
+                c[i] = lambda;
+            }
+            a[0] = 1 + lambda; 
+            a[1] = 1 + 5 * lambda; 
+            a[n - 1] = 1 + lambda; 
+            a[n - 2] = 1 + 5 * lambda;
+            b[0] = -2 * lambda; 
+            b[n - 2] = -2 * lambda;
+            
+            // LDL^T Factorization
+            d[0] = a[0];
+            e[0] = b[0] / d[0];
+            f[0] = c[0] / d[0];
+            
+            d[1] = a[1] - d[0] * e[0] * e[0];
+            e[1] = (b[1] - d[0] * e[0] * f[0]) / d[1];
+            f[1] = c[1] / d[1];
+            
+            for (let i = 2; i < n; i++) {
+                d[i] = a[i] - d[i-1] * e[i-1] * e[i-1] - d[i-2] * f[i-2] * f[i-2];
+                if (i < n - 1) e[i] = (b[i] - d[i-1] * e[i-1] * f[i-1]) / d[i];
+                if (i < n - 2) f[i] = c[i] / d[i];
+            }
+            
+            // Forward Substitution
+            let z = new Float64Array(n);
+            z[0] = data[0];
+            z[1] = data[1] - e[0] * z[0];
+            for (let i = 2; i < n; i++) {
+                z[i] = data[i] - e[i-1] * z[i-1] - f[i-2] * z[i-2];
+            }
+            
+            // Backward Substitution (Finding Trend)
+            let x = new Float64Array(n); 
+            x[n-1] = z[n-1] / d[n-1];
+            x[n-2] = z[n-2] / d[n-2] - e[n-2] * x[n-1];
+            for (let i = n - 3; i >= 0; i--) {
+                x[i] = z[i] / d[i] - e[i] * x[i+1] - f[i] * x[i+2];
+            }
+            
+            // Remove Trend from original data
+            let detrended = new Array(n);
+            for (let i = 0; i < n; i++) {
+                detrended[i] = data[i] - x[i];
             }
             
             return detrended;
@@ -296,7 +343,6 @@
             // Pre-calculate Hann Window to eliminate spectral leakage during the scan
             const windowedData = new Array(n);
             for (let t = 0; t < n; t++) {
-                // Hann multiplier: tapers the edges of the dataset down to zero
                 let hannMultiplier = 0.5 * (1 - Math.cos((2 * Math.PI * t) / (n - 1)));
                 windowedData[t] = data[t] * hannMultiplier;
             }
@@ -306,13 +352,11 @@
                 let omega = 2 * Math.PI / L;
                 let sumR = 0, sumI = 0;
                 
-                // Scan frequencies using the windowed data
                 for (let t = 0; t < n; t++) {
                     sumR += windowedData[t] * Math.cos(-omega * t);
                     sumI += windowedData[t] * Math.sin(-omega * t);
                 }
                 
-                // Hann window inherently halves the total energy, so we multiply by 4/n instead of 2/n
                 let amp = (4 / n) * Math.sqrt(sumR*sumR + sumI*sumI);
                 spectrumData.lengths.push(L);
                 spectrumData.amps.push(amp);
@@ -321,7 +365,6 @@
             // Find Peaks & Extract Phase
             const actualMaxLen = Math.floor(n / 3); 
             for (let i = 1; i < spectrumData.amps.length - 1; i++) {
-                // Check for local maxima in the spectrum
                 if (spectrumData.amps[i] > spectrumData.amps[i - 1] && spectrumData.amps[i] > spectrumData.amps[i + 1]) {
                     
                     let L = spectrumData.lengths[i];
@@ -376,12 +419,12 @@
                 }
             }
 
-            // Filter by Threshold & Sort
+            // Filter by Threshold & Sort by CYCLE STRENGTH per FSC rules
             analyzedCycles = cycles.filter(c => c.stab >= currentThreshold);
             if (analyzedCycles.length === 0) {
-                analyzedCycles = cycles.sort((a,b) => b.stab - a.stab).slice(0, 5);
+                analyzedCycles = cycles.sort((a,b) => b.strg - a.strg).slice(0, 5);
             } else {
-                analyzedCycles.sort((a,b) => b.stab - a.stab);
+                analyzedCycles.sort((a,b) => b.strg - a.strg);
             }
 
             // Auto-select the top 2
@@ -444,7 +487,6 @@
                 let x = i - (n - 1); 
                 active.forEach(c => {
                     let omega = 2 * Math.PI / c.len;
-                    // MULTIPLIED BY STABILITY
                     compositeWave[i] += (c.amp * c.stab) * Math.cos(omega * x + c.phase);
                 });
             }
@@ -574,7 +616,6 @@
 
             currentTicker = tickerInput;
             
-            // Toggle icons and disable button
             btn.disabled = true;
             downloadIcon.classList.add('hidden');
             loaderIcon.classList.remove('hidden');
@@ -595,7 +636,6 @@
                 console.error(err);
                 showToast(`Unable to fetch Web Data for ${currentTicker}. Public proxies may be blocked. Please use the CSV upload button instead.`);
             } finally {
-                // Revert toggle back to normal state
                 btn.disabled = false;
                 loaderIcon.classList.add('hidden');
                 downloadIcon.classList.remove('hidden');
