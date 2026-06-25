@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cycle Scanner Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .pill-green { background-color: #4CAF50; color: white; font-weight: bold; border-radius: 4px; padding: 2px 8px; text-align: center; display: inline-block; width: 60px;}
+        .pill-red { background-color: #F44336; color: white; font-weight: bold; border-radius: 4px; padding: 2px 8px; text-align: center; display: inline-block; width: 60px;}
+        .table-container { height: calc(100vh - 120px); overflow-y: auto; }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+        th { position: sticky; top: 0; background: #f8fafc; z-index: 10; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body class="h-screen flex flex-col p-4 text-slate-800 overflow-hidden">
+
+    <div id="toast" class="fixed top-4 right-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-xl transform transition-transform duration-300 translate-x-full z-50 flex items-center gap-3">
+        <i data-lucide="alert-circle" class="w-5 h-5 shrink-0"></i>
+        <span id="toastMessage" class="text-sm font-medium"></span>
+        <button onclick="hideToast()" class="ml-2 hover:bg-red-700 p-1 rounded transition-colors">
+            <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+    </div>
+
+    <div class="flex justify-between items-center mb-4 px-2">
+        <h1 class="text-2xl font-extrabold text-slate-800 flex items-center gap-2">
+            <i data-lucide="activity" class="text-blue-600"></i> Cycle Scanner Dashboard
+        </h1>
+        <div class="flex items-center gap-3 bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200">
+            
+            <div class="flex items-center gap-2">
+                <select id="timeframeSelect" class="bg-slate-50 border border-slate-300 rounded px-2 py-1 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                    <option value="1d" selected>Daily</option>
+                    <option value="1wk">Weekly</option>
+                    <option value="1mo">Monthly</option>
+                </select>
+
+                <input type="text" id="tickerInput" value="CL=F" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase" placeholder="Ticker">
+                <button id="loadBtn" onclick="runScanner()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-md text-sm font-semibold transition-colors flex items-center gap-1" title="Load from Yahoo Finance">
+                    <i data-lucide="download" class="w-4 h-4"></i> Web
+                </button>
+            </div>
+            
+            <div class="h-6 w-px bg-slate-300 mx-1"></div>
+            
+            <label for="csvUpload" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-sm font-semibold transition-colors flex items-center gap-1 cursor-pointer" title="Upload Local CSV Data">
+                <i data-lucide="upload" class="w-4 h-4"></i> CSV
+            </label>
+            <input type="file" id="csvUpload" accept=".csv" class="hidden" onchange="handleFileUpload(event)">
+
+            <div class="h-6 w-px bg-slate-300 mx-1"></div>
+            
+            <div class="flex items-center gap-2">
+                <label class="text-sm font-semibold text-slate-600">Stability:</label>
+                <input type="range" id="thresholdSlider" min="0" max="1" step="0.01" value="0.40" class="w-24 cursor-pointer" onchange="updateThreshold(this.value)">
+                <span id="thresholdValue" class="text-sm font-bold text-blue-600 w-10 text-right">40%</span>
+            </div>
+            
+        </div>
+    </div>
+
+    <div class="flex flex-1 gap-4 min-h-0">
+        <div class="flex flex-col flex-1 gap-4 min-w-0">
+            <div class="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 p-2 relative">
+                <div id="mainChart" class="w-full h-full"></div>
+            </div>
+            
+            <div class="h-[35%] bg-white rounded-xl shadow-sm border border-slate-200 p-2 relative">
+                <div id="spectrumChart" class="w-full h-full"></div>
+            </div>
+        </div>
+
+        <div class="w-96 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col">
+            <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-xl">
+                <h3 class="text-base font-bold text-slate-700">Cycle Spectrum Data</h3>
+                <span class="text-xs text-slate-500 font-medium">Ranked by Stability</span>
+            </div>
+            <div class="table-container p-2">
+                <table class="w-full text-sm text-right">
+                    <thead>
+                        <tr class="text-slate-500 font-semibold border-b border-slate-200">
+                            <th class="py-2 pl-2 text-center">✔️</th>
+                            <th class="py-2">Len</th>
+                            <th class="py-2">Amp</th>
+                            <th class="py-2">Strg</th>
+                            <th class="py-2 pr-2">Stab</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="text-slate-700 divide-y divide-slate-100">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Icons
+        lucide.createIcons();
+
+        // Global State
+        let rawData = [];
+        let dates = [];
+        let detrendedData = [];
+        let analyzedCycles = [];
+        let spectrumData = { lengths: [], amps: [] };
+        let activeCycleLengths = new Set();
+        let currentThreshold = 0.40;
+        let currentTicker = "CL=F";
+
+        // Toast Notification System
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMessage').innerText = message;
+            toast.classList.remove('translate-x-full');
+            setTimeout(hideToast, 6000);
+        }
+
+        function hideToast() {
+            document.getElementById('toast').classList.add('translate-x-full');
+        }
+
+        // --- DATA LOADERS ---
+
+        // 1A. Fetch Live Data from Yahoo Finance with Fallback Proxies
+        async function fetchYahooData(ticker, interval = "1d") {
+            let range = "3y";
+            if (interval === "1wk") range = "10y";
+            if (interval === "1mo") range = "20y";
+
+            const url1 = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=${interval}`;
+            const url2 = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=${interval}`;
+            
+            const proxies = [
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(url1)}`,
+                `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url1)}`,
+                `https://corsproxy.io/?${encodeURIComponent(url1)}`,
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(url2)}`,
+                `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url2)}`
+            ];
+
+            let yfData = null;
+
+            for (const proxyUrl of proxies) {
+                try {
+                    const response = await fetch(proxyUrl, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    
+                    if (!response.ok) continue;
+                    
+                    const data = await response.json();
+                    
+                    if (data && data.chart && data.chart.result && data.chart.result.length > 0) {
+                        yfData = data;
+                        break; 
+                    }
+                } catch (e) {
+                    console.warn("Proxy attempt failed:", proxyUrl);
+                }
+            }
+            
+            if (!yfData) {
+                throw new Error("Unable to fetch data. All public CORS proxies failed or ticker is invalid.");
+            }
+
+            const result = yfData.chart.result[0];
+            const timestamps = result.timestamp;
+            const closes = result.indicators.quote[0].close;
+            
+            let prices = [];
+            let dts = [];
+            
+            for (let i = 0; i < timestamps.length; i++) {
+                if (closes[i] !== null && closes[i] !== undefined) {
+                    prices.push(closes[i]);
+                    dts.push(new Date(timestamps[i] * 1000).toISOString().split('T')[0]);
+                }
+            }
+            
+            return { prices, dates: dts };
+        }
+
+        // 1B. Parse uploaded CSV Data
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                processCSV(text, file.name);
+            };
+            reader.readAsText(file);
+        }
+
+        function processCSV(csvText, fileName) {
+            const lines = csvText.split('\n').map(l => l.trim()).filter(l => l);
+            if (lines.length < 2) {
+                showToast("Invalid or empty CSV.");
+                return;
+            }
+
+            const headers = lines[0].split(',').map(h => h.trim());
+            
+            let dateIdx = headers.findIndex(h => h.toLowerCase().includes('date'));
+            let closeIdx = headers.findIndex(h => h.includes('收盘') || h.toLowerCase().includes('close'));
+
+            if (dateIdx === -1) dateIdx = 0; 
+            if (closeIdx === -1) closeIdx = headers.length - 1; 
+
+            let parsedData = [];
+            for (let i = 1; i < lines.length; i++) {
+                const cols = lines[i].split(',').map(c => c.trim());
+                if (cols.length > closeIdx) {
+                    const dateStr = cols[dateIdx];
+                    const priceStr = cols[closeIdx];
+                    const price = parseFloat(priceStr);
+                    
+                    if (!isNaN(price) && dateStr) {
+                        parsedData.push({ date: dateStr, price: price });
+                    }
+                }
+            }
+
+            parsedData.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            rawData = parsedData.map(d => d.price);
+            dates = parsedData.map(d => d.date);
+
+            if (rawData.length < 50) {
+                showToast("Not enough valid data rows found in the CSV. Need at least 50 bars.");
+                return;
+            }
+
+            currentTicker = fileName.split('.')[0];
+            document.getElementById('tickerInput').value = currentTicker;
+
+            detrendedData = detrendData(rawData);
+            calculateCycles();
+            updateUI();
+        }
+
+        // --- MATHEMATICS & ALGORITHMS ---
+
+        // 2. Detrending (50-bar Centered Moving Average High-Pass Filter)
+        function detrendData(data) {
+            const n = data.length;
+            const detrended = new Array(n);
+            
+            // Dynamically size the window (max 50 bars, or smaller for short datasets)
+            const windowSize = Math.min(50, Math.floor(n / 4));
+            const halfWindow = Math.floor(windowSize / 2);
+
+            for (let i = 0; i < n; i++) {
+                // Calculate dynamic bounds to keep the average centered
+                let start = Math.max(0, i - halfWindow);
+                let end = Math.min(n - 1, i + halfWindow);
+                let count = end - start + 1;
+                
+                let sum = 0;
+                for (let j = start; j <= end; j++) {
+                    sum += data[j];
+                }
+                
+                let localMean = sum / count;
+                // Subtract the local mean from the raw price to isolate the oscillation
+                detrended[i] = data[i] - localMean;
+            }
+            
+            return detrended;
+        }
+
+        // 3. Cycle Detection (Hann Windowed, Fractional DFT Proxy)
+        function calculateCycles() {
+            const data = detrendedData;
+            const n = data.length;
+            const minLen = 10;
+            const maxLen = Math.min(400, Math.floor(n / 2)); 
+            
+            spectrumData.lengths = [];
+            spectrumData.amps = [];
+            let cycles = [];
+
+            // Pre-calculate Hann Window to eliminate spectral leakage during the scan
+            const windowedData = new Array(n);
+            for (let t = 0; t < n; t++) {
+                // Hann multiplier: tapers the edges of the dataset down to zero
+                let hannMultiplier = 0.5 * (1 - Math.cos((2 * Math.PI * t) / (n - 1)));
+                windowedData[t] = data[t] * hannMultiplier;
+            }
+
+            // High-Resolution Spectrum Scan (0.5 fractional steps)
+            for (let L = minLen; L <= maxLen; L += 0.5) {
+                let omega = 2 * Math.PI / L;
+                let sumR = 0, sumI = 0;
+                
+                // Scan frequencies using the windowed data
+                for (let t = 0; t < n; t++) {
+                    sumR += windowedData[t] * Math.cos(-omega * t);
+                    sumI += windowedData[t] * Math.sin(-omega * t);
+                }
+                
+                // Hann window inherently halves the total energy, so we multiply by 4/n instead of 2/n
+                let amp = (4 / n) * Math.sqrt(sumR*sumR + sumI*sumI);
+                spectrumData.lengths.push(L);
+                spectrumData.amps.push(amp);
+            }
+
+            // Find Peaks & Extract Phase
+            const actualMaxLen = Math.floor(n / 3); 
+            for (let i = 1; i < spectrumData.amps.length - 1; i++) {
+                // Check for local maxima in the spectrum
+                if (spectrumData.amps[i] > spectrumData.amps[i - 1] && spectrumData.amps[i] > spectrumData.amps[i + 1]) {
+                    
+                    let L = spectrumData.lengths[i];
+                    if (L > actualMaxLen) continue; 
+                    
+                    let omega = 2 * Math.PI / L;
+
+                    // Extract Phase & True Amplitude using UN-WINDOWED recent data
+                    let chunkLen = Math.floor(L);
+                    let lastChunk = data.slice(-chunkLen);
+                    let lR = 0, lI = 0;
+                    for (let t = 0; t < chunkLen; t++) {
+                        lR += lastChunk[t] * Math.cos(-omega * t);
+                        lI += lastChunk[t] * Math.sin(-omega * t);
+                    }
+                    
+                    let currentPhase = Math.atan2(lI, lR);
+                    let trueAmp = (2 / chunkLen) * Math.sqrt(lR*lR + lI*lI);
+
+                    // Stability Verification (Phase Locking Value / Bartels Test)
+                    let nChunks = Math.floor(n / chunkLen);
+                    let stability = 0;
+                    if (nChunks >= 3) {
+                        let sumPhaseR = 0, sumPhaseI = 0;
+                        for (let c = 0; c < nChunks; c++) {
+                            let chunk = data.slice(n - (c+1)*chunkLen, n - c*chunkLen);
+                            let cR = 0, cI = 0;
+                            for (let t = 0; t < chunkLen; t++) {
+                                cR += chunk[t] * Math.cos(-omega * t);
+                                cI += chunk[t] * Math.sin(-omega * t);
+                            }
+                            let phase = Math.atan2(cI, cR);
+                            sumPhaseR += Math.cos(phase);
+                            sumPhaseI += Math.sin(phase);
+                        }
+                        stability = Math.sqrt(sumPhaseR*sumPhaseR + sumPhaseI*sumPhaseI) / nChunks;
+                    }
+
+                    // Market Direction Matrix
+                    let currVal = trueAmp * Math.cos(currentPhase);
+                    let nextVal = trueAmp * Math.cos(omega * 1 + currentPhase);
+                    let isBullish = nextVal > currVal;
+
+                    cycles.push({
+                        len: L,
+                        amp: trueAmp, 
+                        strg: trueAmp / L,
+                        stab: stability,
+                        phase: currentPhase,
+                        bullish: isBullish
+                    });
+                }
+            }
+
+            // Filter by Threshold & Sort
+            analyzedCycles = cycles.filter(c => c.stab >= currentThreshold);
+            if (analyzedCycles.length === 0) {
+                analyzedCycles = cycles.sort((a,b) => b.stab - a.stab).slice(0, 5);
+            } else {
+                analyzedCycles.sort((a,b) => b.stab - a.stab);
+            }
+
+            // Auto-select the top 2
+            activeCycleLengths.clear();
+            for(let i=0; i<Math.min(2, analyzedCycles.length); i++){
+                activeCycleLengths.add(analyzedCycles[i].len
