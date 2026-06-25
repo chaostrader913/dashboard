@@ -4,11 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cycle Scanner Dashboard</title>
-    <!-- Tailwind CSS for Styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Plotly.js for Charts -->
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         body { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
@@ -25,7 +22,6 @@
 </head>
 <body class="h-screen flex flex-col p-4 text-slate-800 overflow-hidden">
 
-    <!-- Toast Notification (Replaces window.alert) -->
     <div id="toast" class="fixed top-4 right-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-xl transform transition-transform duration-300 translate-x-full z-50 flex items-center gap-3">
         <i data-lucide="alert-circle" class="w-5 h-5 shrink-0"></i>
         <span id="toastMessage" class="text-sm font-medium"></span>
@@ -34,21 +30,19 @@
         </button>
     </div>
 
-    <!-- Header -->
     <div class="flex justify-between items-center mb-4 px-2">
         <h1 class="text-2xl font-extrabold text-slate-800 flex items-center gap-2">
             <i data-lucide="activity" class="text-blue-600"></i> Cycle Scanner Dashboard
         </h1>
         <div class="flex items-center gap-3 bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200">
             
-            <!-- Web Data (YF) -->
             <div class="flex items-center gap-2">
                 <select id="timeframeSelect" class="bg-slate-50 border border-slate-300 rounded px-2 py-1 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
                     <option value="1d" selected>Daily</option>
                     <option value="1wk">Weekly</option>
                     <option value="1mo">Monthly</option>
                 </select>
-            
+
                 <input type="text" id="tickerInput" value="CL=F" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase" placeholder="Ticker">
                 <button id="loadBtn" onclick="runScanner()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-md text-sm font-semibold transition-colors flex items-center gap-1" title="Load from Yahoo Finance">
                     <i data-lucide="download" class="w-4 h-4"></i> Web
@@ -57,7 +51,6 @@
             
             <div class="h-6 w-px bg-slate-300 mx-1"></div>
             
-            <!-- Local Data (CSV Upload) -->
             <label for="csvUpload" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-sm font-semibold transition-colors flex items-center gap-1 cursor-pointer" title="Upload Local CSV Data">
                 <i data-lucide="upload" class="w-4 h-4"></i> CSV
             </label>
@@ -65,7 +58,6 @@
 
             <div class="h-6 w-px bg-slate-300 mx-1"></div>
             
-            <!-- Threshold Slider -->
             <div class="flex items-center gap-2">
                 <label class="text-sm font-semibold text-slate-600">Stability:</label>
                 <input type="range" id="thresholdSlider" min="0" max="1" step="0.01" value="0.40" class="w-24 cursor-pointer" onchange="updateThreshold(this.value)">
@@ -75,22 +67,17 @@
         </div>
     </div>
 
-    <!-- Main Layout Grid -->
     <div class="flex flex-1 gap-4 min-h-0">
-        <!-- Left Column: Charts -->
         <div class="flex flex-col flex-1 gap-4 min-w-0">
-            <!-- Price & Composite Chart -->
             <div class="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 p-2 relative">
                 <div id="mainChart" class="w-full h-full"></div>
             </div>
             
-            <!-- Spectrum Periodogram Chart -->
             <div class="h-[35%] bg-white rounded-xl shadow-sm border border-slate-200 p-2 relative">
                 <div id="spectrumChart" class="w-full h-full"></div>
             </div>
         </div>
 
-        <!-- Right Column: Data Table -->
         <div class="w-96 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col">
             <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-xl">
                 <h3 class="text-base font-bold text-slate-700">Cycle Spectrum Data</h3>
@@ -108,8 +95,7 @@
                         </tr>
                     </thead>
                     <tbody id="tableBody" class="text-slate-700 divide-y divide-slate-100">
-                        <!-- Populated by JS -->
-                    </tbody>
+                        </tbody>
                 </table>
             </div>
         </div>
@@ -149,7 +135,7 @@
             let range = "3y";
             if (interval === "1wk") range = "10y";
             if (interval === "1mo") range = "20y";
-        
+
             const url1 = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=${interval}`;
             const url2 = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=${interval}`;
             
@@ -161,9 +147,9 @@
                 `https://api.allorigins.win/raw?url=${encodeURIComponent(url2)}`,
                 `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url2)}`
             ];
-        
+
             let yfData = null;
-        
+
             // Try each proxy until one succeeds and returns proper YF JSON structure
             for (const proxyUrl of proxies) {
                 try {
@@ -188,7 +174,7 @@
             if (!yfData) {
                 throw new Error("Unable to fetch data. All public CORS proxies failed or ticker is invalid.");
             }
-        
+
             const result = yfData.chart.result[0];
             const timestamps = result.timestamp;
             const closes = result.indicators.quote[0].close;
@@ -473,7 +459,7 @@
             // Check timeframe to accurately step future dates
             const tfSelect = document.getElementById('timeframeSelect');
             const currentTf = tfSelect ? tfSelect.value : '1d';
-        
+
             for (let i = 1; i <= futureBars; i++) {
                 let d = new Date(lastDate);
                 
@@ -571,12 +557,12 @@
             const timeframe = document.getElementById('timeframeSelect').value; // Get timeframe
             
             if (!tickerInput) return;
-        
+
             currentTicker = tickerInput;
             btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i>`;
             btn.disabled = true;
             lucide.createIcons();
-        
+
             try {
                 // Pass the timeframe into the fetcher
                 let dataObj = await fetchYahooData(currentTicker, timeframe);
