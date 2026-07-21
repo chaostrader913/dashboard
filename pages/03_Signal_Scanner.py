@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import mplfinance as mpf
+# Force matplotlib to use a thread-safe, non-interactive backend
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-
 # Import from your utils folder
 from utils.data_loader import fetch_data
 from utils.indicators import (
@@ -240,7 +241,7 @@ except Exception as e:
     ax_candle.text(0.5, 0.5, f"HA Error: {e}", ha='center', va='center')
 
 # Display Figure in Streamlit
-st.pyplot(fig, use_container_width=True)
+st.pyplot(fig, width='stretch)
 
 # Prevent memory leaks
 plt.close(fig)
