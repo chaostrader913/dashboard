@@ -1,5 +1,5 @@
 import streamlit as st
-import streamlit.components.v1 as components
+# No need for streamlit.components.v1 anymore!
 
 # 1. Force Streamlit to use the full width of your monitor
 st.set_page_config(layout="wide") 
@@ -65,4 +65,5 @@ tradingview_html = f"""
 # --- 3. Render in Streamlit ---
 # Bumped the height from 600 to 800 for a larger vertical canvas
 with st.container(border=True):
-    components.html(tradingview_html, height=800)
+    # Pass the HTML string directly to st.iframe
+    st.iframe(tradingview_html, height=800)
