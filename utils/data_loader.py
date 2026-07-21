@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-@st.cache_data(ttl=300) 
+@st.cache_data(ttl=900) 
 def fetch_data(ticker, interval="1d", period="1y", custom_days=None):
     """
     Centralized data fetcher. Handles standard intervals and custom business-day resampling.
