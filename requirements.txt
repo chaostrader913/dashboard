@@ -9,6 +9,7 @@ pandas-ta
 matplotlib
 mplfinance
 plotly
+stumpy
 streamlit-lightweight-charts
 streamlit-autorefresh
 lightweight_charts_v5
