@@ -129,10 +129,10 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 if 'Nav_W_Red' in data.columns and not data['Nav_W_Red'].isna().all():
                     apds.append(mpf.make_addplot(data['Nav_W_Red'], type='line', color='#FF1744', panel=1, width=2.5))
 
-                if 'Nav_Squeeze' in data.columns:
-                    squeeze = np.where(data['Nav_Squeeze'], data['Low'] * 0.97, np.nan)
-                    if not np.isnan(squeeze).all():
-                        apds.append(mpf.make_addplot(squeeze, type='scatter', marker='o', color='yellow', markersize=25, panel=0))
+                # if 'Nav_Squeeze' in data.columns:
+                #     squeeze = np.where(data['Nav_Squeeze'], data['Low'] * 0.97, np.nan)
+                #     if not np.isnan(squeeze).all():
+                #         apds.append(mpf.make_addplot(squeeze, type='scatter', marker='o', color='yellow', markersize=25, panel=0))
 
             if apds: kwargs['addplot'] = apds
 
@@ -178,6 +178,9 @@ with st.sidebar:
     st.markdown("#### OVERLAYS")
     sma_check = st.checkbox('SMA', value=False)
     jma_check = st.checkbox('JMA (Weekly)', value=True)
+    if jma_check:
+        jma_length = st.slider("JMA Length", min_value=5, max_value=100, value=7)
+    
     vol_check = st.checkbox('VOLUME', value=False)
     
     tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
@@ -275,7 +278,7 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                                 if 'Volume' in data.columns:
                                     logic['Volume'] = 'sum'
                                 df_w = data.resample('W').apply(logic).dropna(subset=['Close'])
-                                df_w = apply_jma(df_w)
+                                df_w = apply_jma(df_w,length=jma_length)
                                 df_w.index = df_w.index - pd.Timedelta(days=6)
                                 if 'JMA' in df_w.columns:
                                     data['JMA'] = df_w['JMA'].reindex(data.index, method='ffill')
