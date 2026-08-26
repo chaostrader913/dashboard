@@ -74,7 +74,7 @@ TICKER_GROUPS = {
 }
 
 # --- 3. Plotting Engine ---
-def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol, show_tdsq, show_nav):
+def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol, show_tdsq, show_nav, show_jma):
     tech_types = {'OHLC': 'ohlc', 'Candlestick': 'candle', 'Renko': 'renko', 'Point and Figure': 'pnf'}
     
     if chart_type in tech_types:
@@ -111,14 +111,31 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker='$13$', color='red', markersize=70, panel=0))
                 if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker='$13$', color='red', markersize=70, panel=0))
 
-            # 2. Navigator Signals
+            # 2. JMA Signal (Panel 0)
+            if show_jma and 'JMA' in data.columns:
+                apds.append(mpf.make_addplot(data['JMA'], type='line', color='#FF00FF', panel=0, width=1.5))
+
+            # 3. Navigator Signals (Panel 1)
             if show_nav and 'Nav_Output' in data.columns:
-                apds.append(mpf.make_addplot(data['Nav_Output'], type='line', color='#00AAFF', panel=1, width=1.5))
-                apds.append(mpf.make_addplot(data['Nav_Signal'], type='line', color='#FF4B4B', panel=1, width=1.5))
-                
-                squeeze = np.where(data['Nav_Squeeze'], data['Low'] * 0.97, np.nan)
-                if not np.isnan(squeeze).all():
-                    apds.append(mpf.make_addplot(squeeze, type='scatter', marker='o', color='yellow', markersize=30, panel=0))
+                # Current TF Navigator (Thin Line: Cyan / Orange)
+                if 'Nav_Green' in data.columns and not data['Nav_Green'].isna().all():
+                    apds.append(mpf.make_addplot(data['Nav_Green'], type='line', color='#00E5FF', panel=1, width=1.2))
+                if 'Nav_Red' in data.columns and not data['Nav_Red'].isna().all():
+                    apds.append(mpf.make_addplot(data['Nav_Red'], type='line', color='#FF9100', panel=1, width=1.2))
+                if 'Nav_Signal' in data.columns and not data['Nav_Signal'].isna().all():
+                    apds.append(mpf.make_addplot(data['Nav_Signal'], type='line', color='gray', panel=1, width=0.8, linestyle='--'))
+
+                # Weekly HTF Navigator (Thicker Line: Spring Green / Bright Red)
+                if 'Nav_W_Green' in data.columns and not data['Nav_W_Green'].isna().all():
+                    apds.append(mpf.make_addplot(data['Nav_W_Green'], type='line', color='#00FF7F', panel=1, width=2.5))
+                if 'Nav_W_Red' in data.columns and not data['Nav_W_Red'].isna().all():
+                    apds.append(mpf.make_addplot(data['Nav_W_Red'], type='line', color='#FF1744', panel=1, width=2.5))
+
+                # Squeeze Dots on Price Panel
+                if 'Nav_Squeeze' in data.columns:
+                    squeeze = np.where(data['Nav_Squeeze'], data['Low'] * 0.97, np.nan)
+                    if not np.isnan(squeeze).all():
+                        apds.append(mpf.make_addplot(squeeze, type='scatter', marker='o', color='yellow', markersize=25, panel=0))
 
             if apds: kwargs['addplot'] = apds
 
@@ -135,6 +152,8 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         prices = data['Close']
         ax.plot(prices.index, prices, linewidth=1.5, color='#00FFAA' if style=='nightclouds' else 'blue')
         if show_sma: ax.plot(prices.index, prices.rolling(20).mean(), linestyle='--', color='gray', alpha=0.7)
+        if show_jma and 'JMA' in data.columns:
+            ax.plot(prices.index, data['JMA'], linestyle='-', color='#FF00FF', linewidth=1.5)
             
         ax.set_title(f"{name} ({ticker})", fontsize=10, color='white' if style=='nightclouds' else 'black', pad=12)
         
@@ -165,10 +184,11 @@ with st.sidebar:
     st.divider()
     st.markdown("#### OVERLAYS")
     sma_check = st.checkbox('SMA', value=True)
+    jma_check = st.checkbox('JMA', value=False)
     vol_check = st.checkbox('VOLUME', value=True)
     
     tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
-    nav_check = st.checkbox('NAVIGATOR', value=True)
+    nav_check = st.checkbox('NAVIGATOR (Current + Weekly)', value=True)
     
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
@@ -183,7 +203,6 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
         with st.expander(f"🥊 View {group_name} Renko Relative-Strength Matrix", expanded=False):
             with st.spinner(f"Calculating vectorized pairwise ratios for {group_name}..."):
                 try:
-                    # Dynamically uses the period_sel from the sidebar
                     matrix_df = run_relative_strength_matrix(tickers, period=period_sel)
                     if not matrix_df.empty:
                         st.dataframe(matrix_df, use_container_width=True)
@@ -207,11 +226,22 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                 
                         data = data.loc[~data.index.duplicated(keep='first')]
                         if tdsq_check:
-                            data = apply_td_sequential(data)
+                            try:
+                                data = apply_td_sequential(data)
+                            except Exception: pass
                         if nav_check:
-                            data = apply_navigator(data)
+                            try:
+                                data = apply_navigator(data)
+                            except Exception: pass
+                        if jma_check:
+                            try:
+                                data = apply_jma(data)
+                            except Exception: pass
                             
-                        fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, nav_check)
+                        fig = plot_single_asset(
+                            ticker, name, data, chart_sel, style_sel, 
+                            sma_check, vol_check, tdsq_check, nav_check, jma_check
+                        )
                         
                         st.pyplot(fig, width='stretch')
                         plt.close(fig) 
