@@ -11,7 +11,8 @@ matplotlib.use('Agg')
 
 # --- IMPORT GLOBALS ---
 from utils.data_loader import fetch_data
-from utils.indicators import apply_td_sequential, apply_rsi_divergence, apply_jma
+from utils.indicators import apply_td_sequential, apply_navigator, apply_jma
+from utils.renko_matrix import run_relative_strength_matrix
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -73,7 +74,7 @@ TICKER_GROUPS = {
 }
 
 # --- 3. Plotting Engine ---
-def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol, show_tdsq, show_rsi):
+def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol, show_tdsq, show_nav):
     tech_types = {'OHLC': 'ohlc', 'Candlestick': 'candle', 'Renko': 'renko', 'Point and Figure': 'pnf'}
     
     if chart_type in tech_types:
@@ -86,32 +87,38 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         )
         
         if show_sma and mpf_type not in ['renko', 'pnf']: kwargs['mav'] = (20,50)
-        if show_vol and 'Volume' in data.columns: kwargs['volume'] = True
         if mpf_type == 'renko': kwargs['renko_params'] = {'brick_size': 'atr'}
         elif mpf_type == 'pnf': kwargs['pnf_params'] = {'box_size': 'atr'}
+
+        # --- DYNAMIC PANEL MANAGEMENT ---
+        if show_vol and 'Volume' in data.columns:
+            kwargs['volume'] = True
+            if show_nav and mpf_type not in ['renko', 'pnf']:
+                kwargs['volume_panel'] = 2
 
         # --- SIGNAL OVERLAYS ---
         apds = []
         if mpf_type not in ['renko', 'pnf']:
-            # 1. TDSQ Signals (Using standard markers to avoid font crashes)
+            # 1. TDSQ Signals
             if show_tdsq and 'Setup_Signal' in data.columns:
                 b9 = np.where(data['Setup_Signal'] == 1, data['Low'] * 0.98, np.nan)
                 s9 = np.where(data['Setup_Signal'] == -1, data['High'] * 1.02, np.nan)
                 b13 = np.where(data['Countdown_Signal'] == 1, data['Low'] * 0.99, np.nan)
                 s13 = np.where(data['Countdown_Signal'] == -1, data['High'] * 1.01, np.nan)
                 
-                # Setup (9) = Circles
-                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker='$9$', color='green', markersize=50))
-                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker='$9$', color='green', markersize=50))
-                
-                # Countdown (13) = Stars
-                if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker='$13$', color='red', markersize=70))
-                if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker='$13$', color='red', markersize=70))
+                if not np.isnan(b9).all(): apds.append(mpf.make_addplot(b9, type='scatter', marker='$9$', color='green', markersize=50, panel=0))
+                if not np.isnan(s9).all(): apds.append(mpf.make_addplot(s9, type='scatter', marker='$9$', color='green', markersize=50, panel=0))
+                if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker='$13$', color='red', markersize=70, panel=0))
+                if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker='$13$', color='red', markersize=70, panel=0))
 
-            # 2. RSI Divergence Signals
-            if show_rsi and 'Signal' in data.columns:
-                rsi_b = np.where(data['Signal'] == 1, data['Low'] * 0.99, np.nan)
-                if not np.isnan(rsi_b).all(): apds.append(mpf.make_addplot(rsi_b, type='scatter', marker='^', color='yellow', markersize=80))
+            # 2. Navigator Signals
+            if show_nav and 'Nav_Output' in data.columns:
+                apds.append(mpf.make_addplot(data['Nav_Output'], type='line', color='#00AAFF', panel=1, width=1.5))
+                apds.append(mpf.make_addplot(data['Nav_Signal'], type='line', color='#FF4B4B', panel=1, width=1.5))
+                
+                squeeze = np.where(data['Nav_Squeeze'], data['Low'] * 0.97, np.nan)
+                if not np.isnan(squeeze).all():
+                    apds.append(mpf.make_addplot(squeeze, type='scatter', marker='o', color='yellow', markersize=30, panel=0))
 
             if apds: kwargs['addplot'] = apds
 
@@ -119,7 +126,6 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
         
         if style == 'nightclouds': fig.patch.set_facecolor('#0E1117')
         
-        # Manually adjust subplots to leave room for the title without using tight_layout
         fig.subplots_adjust(top=0.82, bottom=0.15, left=0.1, right=0.9, hspace=0, wspace=0)
         return fig
         
@@ -162,7 +168,7 @@ with st.sidebar:
     vol_check = st.checkbox('VOLUME', value=True)
     
     tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
-    rsi_check = st.checkbox('RSI DIVERGENCE', value=True)
+    nav_check = st.checkbox('NAVIGATOR', value=True)
     
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
@@ -172,6 +178,23 @@ tabs = st.tabs(list(TICKER_GROUPS.keys()))
 
 for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
     with tab:
+        
+        # --- RENKO MATRIX EXPANDER ---
+        with st.expander(f"🥊 View {group_name} Renko Relative-Strength Matrix", expanded=False):
+            with st.spinner(f"Calculating vectorized pairwise ratios for {group_name}..."):
+                try:
+                    # Dynamically uses the period_sel from the sidebar
+                    matrix_df = run_relative_strength_matrix(tickers, period=period_sel)
+                    if not matrix_df.empty:
+                        st.dataframe(matrix_df, use_container_width=True)
+                    else:
+                        st.warning("Not enough data to calculate matrix.")
+                except Exception as e:
+                    st.error(f"Matrix calculation failed: {e}")
+                    
+        st.divider()
+        
+        # --- CHART GRID ---
         cols = st.columns(cols_count)
         for i, (ticker, name) in enumerate(tickers.items()):
             with cols[i % cols_count]:
@@ -185,12 +208,11 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                         data = data.loc[~data.index.duplicated(keep='first')]
                         if tdsq_check:
                             data = apply_td_sequential(data)
-                        if rsi_check:
-                            data = apply_rsi_divergence(data)
+                        if nav_check:
+                            data = apply_navigator(data)
                             
-                        fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, rsi_check)
+                        fig = plot_single_asset(ticker, name, data, chart_sel, style_sel, sma_check, vol_check, tdsq_check, nav_check)
                         
-                        # Updated plotting call for 2026 Streamlit compliance
                         st.pyplot(fig, width='stretch')
                         plt.close(fig) 
                     else:
