@@ -176,9 +176,9 @@ with st.sidebar:
     
     st.divider()
     st.markdown("#### OVERLAYS")
-    sma_check = st.checkbox('SMA', value=True)
-    jma_check = st.checkbox('JMA (Weekly)', value=False)
-    vol_check = st.checkbox('VOLUME', value=True)
+    sma_check = st.checkbox('SMA', value=False)
+    jma_check = st.checkbox('JMA (Weekly)', value=True)
+    vol_check = st.checkbox('VOLUME', value=False)
     
     tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
     nav_check = st.checkbox('NAVIGATOR (Current + Weekly)', value=True)
