@@ -337,3 +337,79 @@ def apply_dma_bands(df, dma_length=10, atr_length=14, multiplier=2.5):
     df['DMA_Lower'] = df['DMA'] - (multiplier * atr)
     df['DMA_Mid'] = df['DMA']
     return df
+
+class Navigator:
+    def __init__(self):
+        self.closesin = pd.Series(dtype=float)
+        self.opensin = pd.Series(dtype=float)
+        self.highsin = pd.Series(dtype=float)
+        self.lowsin = pd.Series(dtype=float)
+        self.volumesin = pd.Series(dtype=float)
+        self.navOutput = pd.Series(dtype=float)
+        self.signalOutput = pd.Series(dtype=float)
+        self.squeezeSignal = pd.Series(dtype=bool)
+
+        self.LookBack = 14
+        self.SmoothingSlowAverage = 25 
+        self.SmoothingFastAverage = 13
+        self.ConsolidationLookBack = 20
+        self.ConsolidationStandardDeviation = 2.0
+        self.ConsolidationATR = 1.5
+
+    def ema(self, series, period):
+        return series.ewm(span=period, adjust=False).mean()
+
+    def sma(self, series, period):
+        return series.rolling(window=period).mean()
+
+    def moving_std_dev(self, series, period):
+        return series.rolling(window=period).std()
+
+    def true_range(self, highs, lows, closes):
+        prev_close = closes.shift(1)
+        return pd.concat([highs - lows, (highs - prev_close).abs(), (lows - prev_close).abs()], axis=1).max(axis=1)
+
+    def calculate(self):
+        opens, closes, highs, lows = self.opensin, self.closesin, self.highsin, self.lowsin
+        temp1 = closes.shift(1)
+        temp2 = closes - temp1
+
+        tsiseries = self.ema(temp2, self.LookBack)
+        tsiseries2 = self.ema(tsiseries, self.SmoothingFastAverage)
+        tsiseriesv2 = temp2.abs()
+        tsiseriesv3 = self.ema(tsiseriesv2, self.LookBack)
+        tsiseriesv4 = self.ema(tsiseriesv3, self.SmoothingFastAverage)
+        tsiseriesv5 = self.ema(tsiseriesv4, 1)
+        
+        tsiseriesv6 = np.where(tsiseriesv5 != 0, (self.ema(tsiseries2, 1) * 100) / tsiseriesv5, 0)
+        self.navOutput = pd.Series(tsiseriesv6, index=closes.index)
+        self.signalOutput = self.ema(self.navOutput, 5)
+
+        price_avg = (opens + highs + lows + closes) / 4
+        avg = self.sma(price_avg, self.ConsolidationLookBack)
+        sdev = self.moving_std_dev(price_avg, self.ConsolidationLookBack)
+        b_upper = avg + self.ConsolidationStandardDeviation * sdev
+        b_lower = avg - self.ConsolidationStandardDeviation * sdev
+        
+        trma = self.sma(self.true_range(highs, lows, closes), self.ConsolidationLookBack)
+        shift = self.ConsolidationATR * trma 
+        k_upper, k_lower = avg + shift, avg - shift
+        self.squeezeSignal = (b_upper <= k_upper) & (b_lower >= k_lower)
+
+def apply_navigator(df):
+    """Wrapper function to apply the Navigator class to a DataFrame."""
+    nav = Navigator()
+    nav.opensin = df['Open']
+    nav.highsin = df['High']
+    nav.lowsin = df['Low']
+    nav.closesin = df['Close']
+    if 'Volume' in df.columns:
+        nav.volumesin = df['Volume']
+        
+    nav.calculate()
+    
+    # Append results to the main dataframe
+    df['Nav_Output'] = nav.navOutput
+    df['Nav_Signal'] = nav.signalOutput
+    df['Nav_Squeeze'] = nav.squeezeSignal
+    return df
