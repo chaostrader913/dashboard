@@ -111,13 +111,12 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 if not np.isnan(b13).all(): apds.append(mpf.make_addplot(b13, type='scatter', marker='$13$', color='red', markersize=70, panel=0))
                 if not np.isnan(s13).all(): apds.append(mpf.make_addplot(s13, type='scatter', marker='$13$', color='red', markersize=70, panel=0))
 
-            # 2. JMA Signal (Panel 0)
+            # 2. HTF Weekly JMA Signal
             if show_jma and 'JMA' in data.columns:
-                apds.append(mpf.make_addplot(data['JMA'], type='line', color='#FF00FF', panel=0, width=1.5))
+                apds.append(mpf.make_addplot(data['JMA'], type='line', color='#FF00FF', panel=0, width=2.5))
 
-            # 3. Navigator Signals (Panel 1)
+            # 3. Navigator Signals
             if show_nav and 'Nav_Output' in data.columns:
-                # Current TF Navigator (Thin Line: Cyan / Orange)
                 if 'Nav_Green' in data.columns and not data['Nav_Green'].isna().all():
                     apds.append(mpf.make_addplot(data['Nav_Green'], type='line', color='#00E5FF', panel=1, width=1.2))
                 if 'Nav_Red' in data.columns and not data['Nav_Red'].isna().all():
@@ -125,13 +124,11 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 if 'Nav_Signal' in data.columns and not data['Nav_Signal'].isna().all():
                     apds.append(mpf.make_addplot(data['Nav_Signal'], type='line', color='gray', panel=1, width=0.8, linestyle='--'))
 
-                # Weekly HTF Navigator (Thicker Line: Spring Green / Bright Red)
                 if 'Nav_W_Green' in data.columns and not data['Nav_W_Green'].isna().all():
                     apds.append(mpf.make_addplot(data['Nav_W_Green'], type='line', color='#00FF7F', panel=1, width=2.5))
                 if 'Nav_W_Red' in data.columns and not data['Nav_W_Red'].isna().all():
                     apds.append(mpf.make_addplot(data['Nav_W_Red'], type='line', color='#FF1744', panel=1, width=2.5))
 
-                # Squeeze Dots on Price Panel
                 if 'Nav_Squeeze' in data.columns:
                     squeeze = np.where(data['Nav_Squeeze'], data['Low'] * 0.97, np.nan)
                     if not np.isnan(squeeze).all():
@@ -140,23 +137,19 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
             if apds: kwargs['addplot'] = apds
 
         fig, axlist = mpf.plot(data, **kwargs)
-        
         if style == 'nightclouds': fig.patch.set_facecolor('#0E1117')
-        
         fig.subplots_adjust(top=0.82, bottom=0.15, left=0.1, right=0.9, hspace=0, wspace=0)
         return fig
         
     else:
-        # Fallback Line Chart
         fig, ax = plt.subplots(figsize=(5, 3.2))
         prices = data['Close']
         ax.plot(prices.index, prices, linewidth=1.5, color='#00FFAA' if style=='nightclouds' else 'blue')
         if show_sma: ax.plot(prices.index, prices.rolling(20).mean(), linestyle='--', color='gray', alpha=0.7)
         if show_jma and 'JMA' in data.columns:
-            ax.plot(prices.index, data['JMA'], linestyle='-', color='#FF00FF', linewidth=1.5)
+            ax.plot(prices.index, data['JMA'], linestyle='-', color='#FF00FF', linewidth=2.5)
             
         ax.set_title(f"{name} ({ticker})", fontsize=10, color='white' if style=='nightclouds' else 'black', pad=12)
-        
         if style == 'nightclouds':
             fig.patch.set_facecolor('#0E1117')
             ax.set_facecolor('#0E1117')
@@ -184,7 +177,7 @@ with st.sidebar:
     st.divider()
     st.markdown("#### OVERLAYS")
     sma_check = st.checkbox('SMA', value=True)
-    jma_check = st.checkbox('JMA', value=False)
+    jma_check = st.checkbox('JMA (Weekly)', value=False)
     vol_check = st.checkbox('VOLUME', value=True)
     
     tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
@@ -193,21 +186,58 @@ with st.sidebar:
     st.divider()
     cols_count = st.slider("GRID COLUMNS", min_value=2, max_value=6, value=4)
 
+# --- Define Background Fetch Padding ---
+if interval_sel in ['1d', 'Custom Days']:
+    bg_period = '5y'
+elif interval_sel == '1h':
+    bg_period = '730d' 
+else:
+    bg_period = '60d'  
+
+# Date mapping to slice the display chart
+slice_map = {
+    '1mo': pd.DateOffset(months=1),
+    '3mo': pd.DateOffset(months=3),
+    '6mo': pd.DateOffset(months=6),
+    '1y': pd.DateOffset(years=1),
+    '2y': pd.DateOffset(years=2)
+}
+
 # --- 5. Main App Execution (Tabs & Grid) ---
 tabs = st.tabs(list(TICKER_GROUPS.keys()))
 
 for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
     with tab:
         
-        # --- RENKO MATRIX EXPANDER ---
+        # We will store the correctly sorted dictionary of tickers here
+        sorted_tickers = tickers.copy() 
+        
+        # --- RENKO MATRIX EXPANDER & SORTING ENGINE ---
         with st.expander(f"🥊 View {group_name} Renko Relative-Strength Matrix", expanded=False):
             with st.spinner(f"Calculating vectorized pairwise ratios for {group_name}..."):
                 try:
                     matrix_df = run_relative_strength_matrix(tickers, period=period_sel)
                     if not matrix_df.empty:
                         st.dataframe(matrix_df, use_container_width=True)
+                        
+                        # --- RE-SORT GRID BASED ON MATRIX RANKING ---
+                        # The matrix output uses 'name' as its index. We need to map that back to the 'ticker' 
+                        # so the grid loop can fetch data correctly.
+                        name_to_ticker = {v: k for k, v in tickers.items()}
+                        sorted_tickers = {}
+                        
+                        for asset_name in matrix_df.index:
+                            if asset_name in name_to_ticker:
+                                tick = name_to_ticker[asset_name]
+                                sorted_tickers[tick] = asset_name
+                                
+                        # Append any tickers that may have failed/dropped during matrix calculation at the very end
+                        for tick, asset_name in tickers.items():
+                            if tick not in sorted_tickers:
+                                sorted_tickers[tick] = asset_name
+                                
                     else:
-                        st.warning("Not enough data to calculate matrix.")
+                        st.warning("Not enough data to calculate matrix. Chart grid will use default order.")
                 except Exception as e:
                     st.error(f"Matrix calculation failed: {e}")
                     
@@ -215,16 +245,20 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
         
         # --- CHART GRID ---
         cols = st.columns(cols_count)
-        for i, (ticker, name) in enumerate(tickers.items()):
+        
+        # Iterate over the NEWLY SORTED dictionary of tickers!
+        for i, (ticker, name) in enumerate(sorted_tickers.items()):
             with cols[i % cols_count]:
                 with st.spinner(f"Loading {ticker}..."):
-                    data = fetch_data(ticker=ticker, interval=interval_sel, period=period_sel, custom_days=day_slider)
+                    
+                    data = fetch_data(ticker=ticker, interval=interval_sel, period=bg_period, custom_days=day_slider)
                     
                     if data is not None and not data.empty:
                         if isinstance(data.columns, pd.MultiIndex):
                             data.columns = data.columns.get_level_values(0)
                 
                         data = data.loc[~data.index.duplicated(keep='first')]
+                        
                         if tdsq_check:
                             try:
                                 data = apply_td_sequential(data)
@@ -233,11 +267,26 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                             try:
                                 data = apply_navigator(data)
                             except Exception: pass
+                            
+                        # --- WEEKLY JMA LOGIC ---
                         if jma_check:
                             try:
-                                data = apply_jma(data)
+                                logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}
+                                if 'Volume' in data.columns:
+                                    logic['Volume'] = 'sum'
+                                df_w = data.resample('W').apply(logic).dropna(subset=['Close'])
+                                df_w = apply_jma(df_w)
+                                df_w.index = df_w.index - pd.Timedelta(days=6)
+                                if 'JMA' in df_w.columns:
+                                    data['JMA'] = df_w['JMA'].reindex(data.index, method='ffill')
                             except Exception: pass
                             
+                        # Slice to final display length
+                        if not data.empty and period_sel in slice_map:
+                            end_dt = data.index[-1]
+                            start_dt = end_dt - slice_map[period_sel]
+                            data = data.loc[start_dt:]
+
                         fig = plot_single_asset(
                             ticker, name, data, chart_sel, style_sel, 
                             sma_check, vol_check, tdsq_check, nav_check, jma_check
