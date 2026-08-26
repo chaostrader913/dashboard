@@ -396,20 +396,73 @@ class Navigator:
         k_upper, k_lower = avg + shift, avg - shift
         self.squeezeSignal = (b_upper <= k_upper) & (b_lower >= k_lower)
 
+
+def _split_green_red(series, condition_bool):
+    """
+    Splits a series into Green and Red components based on condition_bool.
+    Includes crossover points in both series so mplfinance draws continuous lines.
+    """
+    green = series.copy()
+    red = series.copy()
+
+    green[~condition_bool] = np.nan
+    red[condition_bool] = np.nan
+
+    crossover = condition_bool != condition_bool.shift(1)
+    green[crossover] = series[crossover]
+    red[crossover] = series[crossover]
+
+    return green, red
+
+
 def apply_navigator(df):
-    """Wrapper function to apply the Navigator class to a DataFrame."""
-    nav = Navigator()
-    nav.opensin = df['Open']
-    nav.highsin = df['High']
-    nav.lowsin = df['Low']
-    nav.closesin = df['Close']
+    """
+    Computes Current-Timeframe Navigator & Resampled Weekly Navigator.
+    Generates seamless Green/Red conditional series for plotting.
+    """
+    # 1. Current Timeframe Navigator
+    nav_curr = Navigator()
+    nav_curr.opensin, nav_curr.highsin = df['Open'], df['High']
+    nav_curr.lowsin, nav_curr.closesin = df['Low'], df['Close']
     if 'Volume' in df.columns:
-        nav.volumesin = df['Volume']
-        
-    nav.calculate()
-    
-    # Append results to the main dataframe
-    df['Nav_Output'] = nav.navOutput
-    df['Nav_Signal'] = nav.signalOutput
-    df['Nav_Squeeze'] = nav.squeezeSignal
+        nav_curr.volumesin = df['Volume']
+    nav_curr.calculate()
+
+    df['Nav_Output'] = nav_curr.navOutput
+    df['Nav_Signal'] = nav_curr.signalOutput
+    df['Nav_Squeeze'] = nav_curr.squeezeSignal
+
+    # Current TF Green/Red split (Bullish when Nav_Output >= Nav_Signal)
+    df['Nav_Green'], df['Nav_Red'] = _split_green_red(df['Nav_Output'], df['Nav_Output'] >= df['Nav_Signal'])
+
+    # 2. Resampled Weekly (HTF) Navigator
+    try:
+        logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}
+        if 'Volume' in df.columns:
+            logic['Volume'] = 'sum'
+
+        df_weekly = df.resample('W').apply(logic).dropna(subset=['Close'])
+
+        if len(df_weekly) >= 10:
+            nav_week = Navigator()
+            nav_week.opensin, nav_week.highsin = df_weekly['Open'], df_weekly['High']
+            nav_week.lowsin, nav_week.closesin = df_weekly['Low'], df_weekly['Close']
+            if 'Volume' in df_weekly.columns:
+                nav_week.volumesin = df_weekly['Volume']
+            nav_week.calculate()
+
+            # Align back to current timeframe index via forward fill
+            w_out = nav_week.navOutput.reindex(df.index, method='ffill')
+            w_sig = nav_week.signalOutput.reindex(df.index, method='ffill')
+
+            df['Nav_W_Output'] = w_out
+            df['Nav_W_Signal'] = w_sig
+
+            # Weekly Green/Red split (Bullish when Weekly Nav >= Weekly Signal)
+            df['Nav_W_Green'], df['Nav_W_Red'] = _split_green_red(df['Nav_W_Output'], df['Nav_W_Output'] >= df['Nav_W_Signal'])
+        else:
+            df['Nav_W_Green'], df['Nav_W_Red'] = np.nan, np.nan
+    except Exception:
+        df['Nav_W_Green'], df['Nav_W_Red'] = np.nan, np.nan
+
     return df
