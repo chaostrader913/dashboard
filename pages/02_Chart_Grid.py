@@ -13,7 +13,7 @@ matplotlib.use('Agg')
 from utils.data_loader import fetch_data
 from utils.indicators import apply_td_sequential, apply_navigator, apply_jma
 from utils.renko_matrix import run_relative_strength_matrix
-from utils.demark_wave import apply_dwave  # <--- IMPORT THE NEW D-WAVE ENGINE
+from utils.wave import apply_dwave  # <--- IMPORT THE NEW D-WAVE ENGINE
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
