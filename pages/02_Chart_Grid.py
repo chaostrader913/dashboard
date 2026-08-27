@@ -135,25 +135,29 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 #     if not np.isnan(squeeze).all():
                 #         apds.append(mpf.make_addplot(squeeze, type='scatter', marker='o', color='yellow', markersize=25, panel=0))
 
-            # 4. DeMark D-Wave Count (Panel 0)
-            if dwave_check and 'DWave_Up' in data.columns and 'DWave_Dn' in data.columns:
-                # Map the raw output numbers (1-9) to their DeMark labels
-                wave_labels = {1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: 'A', 7: 'B', 8: 'C', 9: '1'}
+            # 4. DeMark D-Wave Count (Current Day Only)
+            if dwave_check and 'DWave_Up_State' in data.columns and 'DWave_Dn_State' in data.columns:
+                wave_labels = {0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: 'A', 7: 'B', 8: 'C'}
+                
+                # Get the active wave strictly as of the final bar
+                current_up_val = data['DWave_Up_State'].iloc[-1]
+                current_dn_val = data['DWave_Dn_State'].iloc[-1]
+                
+                up_text = wave_labels.get(current_up_val, '0')
+                dn_text = wave_labels.get(current_dn_val, '0')
 
-                for val, label_text in wave_labels.items():
-                    # Process Up-Waves (Cyan)
-                    mask_up = data['DWave_Up'] == val
-                    if mask_up.any():
-                        # Push lower than TDSQ to avoid overlapping
-                        y_up = np.where(mask_up, data['Low'] * 0.95, np.nan) 
-                        apds.append(mpf.make_addplot(y_up, type='scatter', marker=f'${label_text}$', color='cyan', markersize=60, panel=0))
-                        
-                    # Process Down-Waves (Yellow)
-                    mask_dn = data['DWave_Dn'] == val
-                    if mask_dn.any():
-                        # Push higher than TDSQ to avoid overlapping
-                        y_dn = np.where(mask_dn, data['High'] * 1.05, np.nan) 
-                        apds.append(mpf.make_addplot(y_dn, type='scatter', marker=f'${label_text}$', color='yellow', markersize=60, panel=0))
+                # Create empty arrays filled with NaNs for the whole chart
+                last_bar_up = np.full(len(data), np.nan)
+                last_bar_dn = np.full(len(data), np.nan)
+                
+                # Assign a value ONLY to the very last index [-1]
+                if current_up_val > 0:
+                    last_bar_up[-1] = data['Low'].iloc[-1] * 0.94
+                    apds.append(mpf.make_addplot(last_bar_up, type='scatter', marker=f'${up_text}$', color='cyan', markersize=100, panel=0))
+                    
+                if current_dn_val > 0:
+                    last_bar_dn[-1] = data['High'].iloc[-1] * 1.06
+                    apds.append(mpf.make_addplot(last_bar_dn, type='scatter', marker=f'${dn_text}$', color='yellow', markersize=100, panel=0))
 
             if apds: kwargs['addplot'] = apds
 
