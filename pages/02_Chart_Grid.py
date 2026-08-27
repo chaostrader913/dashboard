@@ -13,7 +13,7 @@ matplotlib.use('Agg')
 from utils.data_loader import fetch_data
 from utils.indicators import apply_td_sequential, apply_navigator, apply_jma
 from utils.renko_matrix import run_relative_strength_matrix
-from utils.wave import apply_dwave
+from utils.demark_wave import apply_dwave  # <--- IMPORT THE NEW D-WAVE ENGINE
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -75,7 +75,7 @@ TICKER_GROUPS = {
 }
 
 # --- 3. Plotting Engine ---
-def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol, show_tdsq, show_nav, show_jma):
+def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol, show_tdsq, show_nav, show_jma, show_dwave):
     tech_types = {'OHLC': 'ohlc', 'Candlestick': 'candle', 'Renko': 'renko', 'Point and Figure': 'pnf'}
     
     if chart_type in tech_types:
@@ -135,7 +135,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 #     if not np.isnan(squeeze).all():
                 #         apds.append(mpf.make_addplot(squeeze, type='scatter', marker='o', color='yellow', markersize=25, panel=0))
 
-            #4. DeMark D-Wave Plotting
+            # 4. DeMark D-Wave Plotting
             if show_dwave and 'DWave_Up' in data.columns and 'DWave_Dn' in data.columns:
                 wave_labels = {0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: 'A', 7: 'B', 8: 'C'}
                 
@@ -151,6 +151,7 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                     if mask_dn.any():
                         y_dn = np.where(mask_dn, data['Low'] * 0.95 if is_odd else data['High'] * 1.05, np.nan)
                         apds.append(mpf.make_addplot(y_dn, type='scatter', marker=f'${label_text}$', color='yellow', markersize=60))
+
 
             if apds: kwargs['addplot'] = apds
 
@@ -194,15 +195,12 @@ with st.sidebar:
     
     st.divider()
     st.markdown("#### OVERLAYS")
-    sma_check = st.checkbox('SMA', value=False)
-    jma_check = st.checkbox('JMA (Weekly)', value=True)
-    if jma_check:
-        jma_length = st.slider("JMA Length", min_value=5, max_value=100, value=7)
-    
+    sma_check = st.checkbox('SMA', value=True)
+    jma_check = st.checkbox('JMA (Weekly)', value=False)
     vol_check = st.checkbox('VOLUME', value=False)
     
     tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
-    dwave_check = st.checkbox('Wave Count', value=True)
+    dwave_check = st.checkbox('D-Wave Count', value=False)
     nav_check = st.checkbox('NAVIGATOR (Current + Weekly)', value=True)
     
     st.divider()
@@ -231,7 +229,6 @@ tabs = st.tabs(list(TICKER_GROUPS.keys()))
 for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
     with tab:
         
-        # We will store the correctly sorted dictionary of tickers here
         sorted_tickers = tickers.copy() 
         
         # --- RENKO MATRIX EXPANDER & SORTING ENGINE ---
@@ -242,9 +239,6 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                     if not matrix_df.empty:
                         st.dataframe(matrix_df, use_container_width=True)
                         
-                        # --- RE-SORT GRID BASED ON MATRIX RANKING ---
-                        # The matrix output uses 'name' as its index. We need to map that back to the 'ticker' 
-                        # so the grid loop can fetch data correctly.
                         name_to_ticker = {v: k for k, v in tickers.items()}
                         sorted_tickers = {}
                         
@@ -253,7 +247,6 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                                 tick = name_to_ticker[asset_name]
                                 sorted_tickers[tick] = asset_name
                                 
-                        # Append any tickers that may have failed/dropped during matrix calculation at the very end
                         for tick, asset_name in tickers.items():
                             if tick not in sorted_tickers:
                                 sorted_tickers[tick] = asset_name
@@ -268,7 +261,6 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
         # --- CHART GRID ---
         cols = st.columns(cols_count)
         
-        # Iterate over the NEWLY SORTED dictionary of tickers!
         for i, (ticker, name) in enumerate(sorted_tickers.items()):
             with cols[i % cols_count]:
                 with st.spinner(f"Loading {ticker}..."):
@@ -281,32 +273,27 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                 
                         data = data.loc[~data.index.duplicated(keep='first')]
                         
+                        # --- INDICATORS ---
                         if tdsq_check:
-                            try:
-                                data = apply_td_sequential(data)
-                            except Exception: pass
-                                
-                        if dwave_check:
-                            try:
-                                data = apply_dwave(data)
-                            except Exception: pass
-                                
-                        if nav_check:
-                            try:
-                                data = apply_navigator(data)
+                            try: data = apply_td_sequential(data)
                             except Exception: pass
                             
-                        # --- WEEKLY JMA LOGIC ---
+                        if dwave_check:
+                            try: data = apply_dwave(data)
+                            except Exception: pass
+                            
+                        if nav_check:
+                            try: data = apply_navigator(data)
+                            except Exception: pass
+                            
                         if jma_check:
                             try:
                                 logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}
-                                if 'Volume' in data.columns:
-                                    logic['Volume'] = 'sum'
+                                if 'Volume' in data.columns: logic['Volume'] = 'sum'
                                 df_w = data.resample('W').apply(logic).dropna(subset=['Close'])
-                                df_w = apply_jma(df_w,length=jma_length)
+                                df_w = apply_jma(df_w)
                                 df_w.index = df_w.index - pd.Timedelta(days=6)
-                                if 'JMA' in df_w.columns:
-                                    data['JMA'] = df_w['JMA'].reindex(data.index, method='ffill')
+                                if 'JMA' in df_w.columns: data['JMA'] = df_w['JMA'].reindex(data.index, method='ffill')
                             except Exception: pass
                             
                         # Slice to final display length
@@ -317,7 +304,7 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
 
                         fig = plot_single_asset(
                             ticker, name, data, chart_sel, style_sel, 
-                            sma_check, vol_check, tdsq_check, nav_check, jma_check
+                            sma_check, vol_check, tdsq_check, nav_check, jma_check, dwave_check
                         )
                         
                         st.pyplot(fig, width='stretch')
