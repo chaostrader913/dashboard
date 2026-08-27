@@ -13,6 +13,7 @@ matplotlib.use('Agg')
 from utils.data_loader import fetch_data
 from utils.indicators import apply_td_sequential, apply_navigator, apply_jma
 from utils.renko_matrix import run_relative_strength_matrix
+from utils.wave import apply_dwave
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -134,6 +135,26 @@ def plot_single_asset(ticker, name, data, chart_type, style, show_sma, show_vol,
                 #     if not np.isnan(squeeze).all():
                 #         apds.append(mpf.make_addplot(squeeze, type='scatter', marker='o', color='yellow', markersize=25, panel=0))
 
+            # 4. DeMark D-Wave Count (Panel 0)
+            if dwave_check and 'DWave_Up' in data.columns and 'DWave_Dn' in data.columns:
+                # Map the raw output numbers (1-9) to their DeMark labels
+                wave_labels = {1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: 'A', 7: 'B', 8: 'C', 9: '1'}
+
+                for val, label_text in wave_labels.items():
+                    # Process Up-Waves (Cyan)
+                    mask_up = data['DWave_Up'] == val
+                    if mask_up.any():
+                        # Push lower than TDSQ to avoid overlapping
+                        y_up = np.where(mask_up, data['Low'] * 0.95, np.nan) 
+                        apds.append(mpf.make_addplot(y_up, type='scatter', marker=f'${label_text}$', color='cyan', markersize=60, panel=0))
+                        
+                    # Process Down-Waves (Yellow)
+                    mask_dn = data['DWave_Dn'] == val
+                    if mask_dn.any():
+                        # Push higher than TDSQ to avoid overlapping
+                        y_dn = np.where(mask_dn, data['High'] * 1.05, np.nan) 
+                        apds.append(mpf.make_addplot(y_dn, type='scatter', marker=f'${label_text}$', color='yellow', markersize=60, panel=0))
+
             if apds: kwargs['addplot'] = apds
 
         fig, axlist = mpf.plot(data, **kwargs)
@@ -184,6 +205,7 @@ with st.sidebar:
     vol_check = st.checkbox('VOLUME', value=False)
     
     tdsq_check = st.checkbox('TDSQ (Circles/Stars)', value=True)
+    dwave_check = st.checkbox('Wave Count', value=True)
     nav_check = st.checkbox('NAVIGATOR (Current + Weekly)', value=True)
     
     st.divider()
@@ -266,6 +288,12 @@ for tab, (group_name, tickers) in zip(tabs, TICKER_GROUPS.items()):
                             try:
                                 data = apply_td_sequential(data)
                             except Exception: pass
+                                
+                        if dwave_check:
+                            try:
+                                data = apply_dwave(data)
+                            except Exception: pass
+                                
                         if nav_check:
                             try:
                                 data = apply_navigator(data)
